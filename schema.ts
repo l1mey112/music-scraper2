@@ -1,4 +1,4 @@
-import { sqliteTable, integer, text } from "drizzle-orm/sqlite-core";
+import { sqliteTable, integer, text, unique } from "drizzle-orm/sqlite-core";
 
 // stop polluting my namespace
 // spotify v1 api
@@ -20,16 +20,25 @@ export const track = sqliteTable('track', {
 	name: text('name').notNull(),
 	name_locale: text('name_locale', { mode: 'json' }).$type<Locale>().notNull(),
 
-	utc: integer('utc').notNull(), // utc epoch seconds
+	utc: integer('utc').notNull(), // utc epoch milliseconds
 
-	artist_primary_id: integer('artist_primary_id').$type<ArtistId>().notNull(),
-	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>().notNull(), // ArtistId[]
+	// possibly null, meaning no artists yet
+	// can extrapolate artists based on existing metadata
+	artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
+	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
-	album_id: integer('album_id').$type<AlbumId>().notNull(),
-	album_track_number: integer('album_track_number').notNull(), // 1 index based
+	// possibly null, meaning no album yet
+	// can extrapolate albums based on existing metadata
+	album_id: integer('album_id').$type<AlbumId>(),
+	album_track_number: integer('album_track_number'), // 1 index based
+	album_disc_number: integer('album_disc_number'), // 1 index based
 
-	meta: text('meta', { mode: 'json' }).$type<TrackMeta>().notNull(),
+	meta: text('meta', { mode: 'json' }).$type<TrackMeta[]>().notNull(),
+	meta_spotify_id: text('meta_spotify_id').notNull(),
 });
+
+// TODO: fuckers colliding with Track
+export type TrackEntry = typeof track.$inferInsert
 
 export const album = sqliteTable('album', {
 	id: integer('id').$type<AlbumId>().primaryKey(),
@@ -37,12 +46,18 @@ export const album = sqliteTable('album', {
 	name: text('name').notNull(),
 	name_locale: text('name_locale', { mode: 'json' }).$type<Locale>().notNull(),
 
-	utc: integer('utc').notNull(), // utc epoch seconds
+	utc: integer('utc').notNull(), // utc epoch milliseconds
 
-	artist_primary_id: integer('artist_primary_id').$type<ArtistId>().notNull(),
-	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>().notNull(), // ArtistId[]
+	// possibly null, meaning no artists yet
+	// can extrapolate artists based on existing metadata
+	artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
+	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
-	meta: text('meta', { mode: 'json' }).$type<AlbumMeta>().notNull(),
+	meta: text('meta', { mode: 'json' }).$type<AlbumMeta[]>().notNull(),
+	meta_spotify_id: text('meta_spotify_id').unique(),
+
+	// uniqueness is only checked on non null arguments?
+	// https://sqlite.org/faq.html#q26
 });
 
 // TODO: user defined metadata using a type, which is the closest ground truth
@@ -59,7 +74,7 @@ type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // .
 export type TrackMeta = {
 	[K in TrackMetaSource]: {
 		src: K;
-		utc: number; // utc epoch seconds
+		utc: number; // utc epoch milliseconds
 		data: TrackMetaImpl[K] | null; // null means failed
 	};
 }[TrackMetaSource]
@@ -76,7 +91,7 @@ type AlbumMetaSource = 'spotify_v1_get_album' // ... | 'youtube' | 'niconico' | 
 export type AlbumMeta = {
 	[K in AlbumMetaSource]: {
 		src: K;
-		utc: number; // utc epoch seconds
+		utc: number; // utc epoch milliseconds
 		data: AlbumMetaImpl[K] | null; // null means failed
 	};
 }[AlbumMetaSource]
@@ -84,7 +99,7 @@ export type AlbumMeta = {
 export const media = sqliteTable('media', {
 	id: integer('id').$type<MediaId>().primaryKey(),
 
-	utc: integer('utc').notNull(), // utc epoch seconds
+	utc: integer('utc').notNull(), // utc epoch milliseconds
 
 	data: text('data', { mode: 'json' }).$type<MediaEntry>().notNull(),
 });
@@ -95,10 +110,9 @@ type MediaImpl = {
 		url: string | null;
 		local_path: string | null;
 	}
-	n: string
 }
 
-type MediaKind = 'cover_art' | 'n' // ... | 'closed_caption' | 'lyrics' | 'music_video'
+type MediaKind = 'cover_art' // ... | 'closed_caption' | 'lyrics' | 'music_video'
 
 export type MediaEntry = {
 	[K in MediaKind]: {
@@ -106,3 +120,18 @@ export type MediaEntry = {
 		data: MediaImpl[K] | null; // null means failed
 	};
 }[MediaKind]
+
+// user accounts that need to be tracked incrementally to keep up with changes to append to database
+
+export const thirdparty_spotify_users = sqliteTable('thirdparty:spotify_users', {
+	spotify_id: text('spotify_id').primaryKey(),
+})
+
+export const thirdparty_spotify_saved_tracks = sqliteTable('thirdparty:spotify_saved_tracks', {
+	id: integer('id').primaryKey(),
+	utc: integer('utc').notNull(), // utc epoch milliseconds
+	spotify_user_id: text('spotify_user_id').notNull().references(() => thirdparty_spotify_users.spotify_id),
+	spotify_track_id: text('spotify_track_id').notNull(),
+}, (t) => ({
+	unq: unique().on(t.spotify_user_id, t.spotify_track_id),
+}))
