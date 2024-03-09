@@ -33,8 +33,8 @@ export const track = sqliteTable('track', {
 	album_track_number: integer('album_track_number'), // 1 index based
 	album_disc_number: integer('album_disc_number'), // 1 index based
 
-	meta: text('meta', { mode: 'json' }).$type<TrackMeta[]>().notNull(),
-	meta_spotify_id: text('meta_spotify_id').notNull(),
+	meta_spotify_id: text('meta_spotify_id'),
+	meta_isrc: text('meta_isrc'),
 });
 
 // TODO: fuckers colliding with Track
@@ -53,33 +53,27 @@ export const album = sqliteTable('album', {
 	artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
 	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
-	meta: text('meta', { mode: 'json' }).$type<AlbumMeta[]>().notNull(),
-	meta_spotify_id: text('meta_spotify_id').unique(),
-
-	// uniqueness is only checked on non null arguments?
-	// https://sqlite.org/faq.html#q26
+	meta_spotify_id: text('meta_spotify_id'),
+	meta_isrc: text('meta_isrc'),
 });
+
+// uniqueness is only checked on non null arguments?
+// https://sqlite.org/faq.html#q26
 
 // TODO: user defined metadata using a type, which is the closest ground truth
 
-// use `never` for unimplemented sources
-type TrackMetaImpl = {
-	spotify_v1_get_track: Track,
-	spotify_v1_audio_features: AudioFeatures,
-	// youtube: never,
-}
 
-type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
+//type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
 
-export type TrackMeta = {
+/* export type TrackMeta = {
 	[K in TrackMetaSource]: {
 		src: K;
 		utc: number; // utc epoch milliseconds
 		data: TrackMetaImpl[K] | null; // null means failed
 	};
-}[TrackMetaSource]
+}[TrackMetaSource] */
 
-type AlbumMetaImpl = {
+/* type AlbumMetaImpl = {
 	// spotify album returns track list as a paginated API chain
 	// it's nice to store, but we can't read track list from album
 	spotify_v1_get_album: Album,
@@ -94,9 +88,35 @@ export type AlbumMeta = {
 		utc: number; // utc epoch milliseconds
 		data: AlbumMetaImpl[K] | null; // null means failed
 	};
-}[AlbumMetaSource]
+}[AlbumMetaSource] */
 
-export const media = sqliteTable('media', {
+// use `never` for unimplemented sources
+
+// remember, if a spotify track isn't available in this 
+
+
+export type TrackMetaId = number;
+type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
+
+export const track_meta = sqliteTable('track_meta', {
+	id: integer('id').$type<TrackMetaId>().primaryKey(),
+	utc: integer('utc').notNull(), // utc epoch milliseconds
+	track_id: integer('track_id').notNull().references(() => track.id),
+
+	kind: text('kind').$type<TrackMetaSource>().notNull(),
+	meta: text('meta', { mode: 'json' }), // null means failed
+}, (t) => ({
+	unq: unique().on(t.track_id, t.kind),
+}))
+
+export type TrackMetaEntry = typeof track_meta.$inferInsert & {
+	meta: {		
+		spotify_v1_get_track: Track,
+		spotify_v1_audio_features: AudioFeatures,
+	}[TrackMetaSource] | null;
+}
+
+/* export const media = sqliteTable('media', {
 	id: integer('id').$type<MediaId>().primaryKey(),
 
 	utc: integer('utc').notNull(), // utc epoch milliseconds
@@ -119,7 +139,7 @@ export type MediaEntry = {
 		src: K;
 		data: MediaImpl[K] | null; // null means failed
 	};
-}[MediaKind]
+}[MediaKind] */
 
 // user accounts that need to be tracked incrementally to keep up with changes to append to database
 
@@ -127,11 +147,16 @@ export const thirdparty_spotify_users = sqliteTable('thirdparty:spotify_users', 
 	spotify_id: text('spotify_id').primaryKey(),
 })
 
+
+
 export const thirdparty_spotify_saved_tracks = sqliteTable('thirdparty:spotify_saved_tracks', {
 	id: integer('id').primaryKey(),
 	utc: integer('utc').notNull(), // utc epoch milliseconds
+	// referencing a spotify id may return information relating to a completely different id, but same released track
+	// for zero ambeguity, we need to store the actual database track id
+	//track_id: integer('track_id').$type<TrackId>().notNull().references(() => track.id),
 	spotify_user_id: text('spotify_user_id').notNull().references(() => thirdparty_spotify_users.spotify_id),
 	spotify_track_id: text('spotify_track_id').notNull(),
 }, (t) => ({
-	unq: unique().on(t.spotify_user_id, t.spotify_track_id),
+	unq: unique().on(t.spotify_track_id, t.spotify_user_id),
 }))

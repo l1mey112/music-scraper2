@@ -1,8 +1,8 @@
-import { SpotifyApi, type AccessToken, type User } from '@spotify/web-api-ts-sdk';
+import { SpotifyApi, type AccessToken, type User, type Track } from '@spotify/web-api-ts-sdk';
 import Database from 'bun:sqlite';
 import { db } from './db';
 import * as schema from './schema';
-import type { TrackEntry, TrackMeta } from './schema';
+import type { TrackEntry } from './schema';
 import { sql } from 'drizzle-orm';
 import { sigint_region, sigint_region_end } from './sigint';
 
@@ -156,38 +156,25 @@ export class Spotify {
 		while (true) {
 			let n_offset = offset <= 50 ? 0 : offset - 50
 
+			const utc_millis = new Date().getTime()
+			
 			const k = await this.api.currentUser.tracks.savedTracks(50, n_offset)
 
-			const for_db_tracks: TrackEntry[] = []
+			const for_db_tracks: Track[] = []
 			const for_db_saved_tracks: (typeof schema.thirdparty_spotify_saved_tracks.$inferInsert)[] = []
 
 			for (const v of k.items) {
-				if (v.track.is_local) {
+				const track = v.track
+
+				if (track.is_local) {
+					console.log(`spotify: skipping local track ${track.name}, id: ${track.id}`)
 					continue
 				}
 
 				// spotify provides ISO 8601 date strings
 				const added_at_millis = new Date(v.added_at).getTime()
 
-				const track = v.track
-
-				// three different UTC millis
-
-				const meta: TrackMeta = {
-					src: 'spotify_v1_get_track',
-					utc: added_at_millis,
-					data: track,
-				}
-
-				for_db_tracks.push({
-					name: track.name,
-					name_locale: {},
-
-					utc: added_at_millis,
-
-					meta: [meta],
-					meta_spotify_id: track.id,
-				})
+				for_db_tracks.push(track)
 
 				for_db_saved_tracks.push({
 					utc: added_at_millis,
@@ -196,10 +183,7 @@ export class Spotify {
 				})
 			}
 
-			await db.schema.insert(schema.track)
-				.values(for_db_tracks)
-				.onConflictDoNothing()
-
+			await db.append_spotify_v1_get_track(for_db_tracks, utc_millis)
 			await db.schema.insert(schema.thirdparty_spotify_saved_tracks)
 				.values(for_db_saved_tracks)
 				.onConflictDoNothing()
