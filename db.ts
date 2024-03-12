@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import { Database } from 'bun:sqlite';
-import type { TrackEntry, TrackMetaEntry, TrackId } from './schema';
+import type { TrackEntry, TrackMetaEntry, TrackId, TrackMetaSource, TrackMetaImpl } from './schema';
 import * as schema from './schema';
 
 // stop polluting my namespace
@@ -14,7 +14,7 @@ class DB {
 	schema: BunSQLiteDatabase<typeof schema>
 
 	constructor() {
-		this.sqlite = new Database('db.sqlite')
+		this.sqlite = new Database('db.sqlite', { create: false, readwrite: true })
 		this.schema = drizzle(this.sqlite, { schema })
 
 		// https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
@@ -43,18 +43,30 @@ class DB {
 		return undefined
 	}
 
-	async upsert_meta_spotify_v1_get_track(track_id: TrackId, track: Track, utc_millis: number) {
-		const meta: TrackMetaEntry = {
+	async upsert_track_meta<T extends TrackMetaSource>(track_id: TrackId, source: T, meta: TrackMetaImpl[T], utc_millis: number) {
+		const meta_entry: TrackMetaEntry = {
 			track_id: track_id,
-			kind: 'spotify_v1_get_track',
+			kind: source,
 			utc: utc_millis,
-			meta: track,
+			meta: meta,
 		}
 
+		await this.upsert_track_metas([meta_entry])
+	}
+
+	async upsert_track_metas(entries: TrackMetaEntry[]) {
 		// this'll probably work
+
+		// TODO: though annoying that you can't update the whole thing in one go
+		//       probably could autogenerate this tbh using Object.keys
 		await this.schema.insert(schema.track_meta)
-			.values(meta)
-			.onConflictDoUpdate({ target: [schema.track_meta.track_id, schema.track_meta.kind], set: meta })
+			.values(entries)
+			.onConflictDoUpdate({ target: [schema.track_meta.track_id, schema.track_meta.kind], set: {
+				utc: sql`excluded.utc`,
+				track_id: sql`excluded.track_id`,
+				kind: sql`excluded.kind`,
+				meta: sql`excluded.meta`
+			}})
 	}
 
 	async append_spotify_v1_get_track(tracks: Track[], utc_millis: number) {
@@ -81,6 +93,7 @@ class DB {
 					utc: utc_millis,
 
 					meta_isrc: isrc, 
+					meta_spotify_id: v.id,
 				}
 
 				// insert the track
@@ -91,7 +104,7 @@ class DB {
 				track_id = r[0].id
 			}
 
-			await this.upsert_meta_spotify_v1_get_track(track_id, v, utc_millis)
+			await this.upsert_track_meta(track_id, 'spotify_v1_get_track', v, utc_millis)
 		}
 	}
 }

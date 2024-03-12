@@ -33,7 +33,8 @@ export const track = sqliteTable('track', {
 	album_track_number: integer('album_track_number'), // 1 index based
 	album_disc_number: integer('album_disc_number'), // 1 index based
 
-	meta_isrc: text('meta_isrc'),
+	meta_isrc: text('meta_isrc'), // absolute
+	meta_spotify_id: text('meta_spotify_id'), // unreliable
 });
 
 // TODO: fuckers colliding with Track
@@ -52,7 +53,8 @@ export const album = sqliteTable('album', {
 	artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
 	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
-	meta_isrc: text('meta_isrc'),
+	meta_isrc: text('meta_isrc'), // absolute
+	meta_spotify_id: text('meta_spotify_id'), // unreliable
 });
 
 // uniqueness is only checked on non null arguments?
@@ -94,8 +96,13 @@ export type AlbumMeta = {
 
 
 export type TrackMetaId = number;
-type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
+export type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
+export type TrackMetaImpl = {
+	spotify_v1_get_track: Track,
+	spotify_v1_audio_features: AudioFeatures,
+}
 
+// INFO: editing this means you have to update `upsert_track_meta`
 export const track_meta = sqliteTable('track_meta', {
 	id: integer('id').$type<TrackMetaId>().primaryKey(),
 	utc: integer('utc').notNull(), // utc epoch milliseconds
@@ -108,10 +115,7 @@ export const track_meta = sqliteTable('track_meta', {
 }))
 
 export type TrackMetaEntry = typeof track_meta.$inferInsert & {
-	meta: {		
-		spotify_v1_get_track: Track,
-		spotify_v1_audio_features: AudioFeatures,
-	}[TrackMetaSource] | null;
+	meta: TrackMetaImpl[TrackMetaSource] | null;
 }
 
 /* export const media = sqliteTable('media', {
@@ -144,8 +148,6 @@ export type MediaEntry = {
 export const thirdparty_spotify_users = sqliteTable('thirdparty:spotify_users', {
 	spotify_id: text('spotify_id').primaryKey(),
 })
-
-
 
 export const thirdparty_spotify_saved_tracks = sqliteTable('thirdparty:spotify_saved_tracks', {
 	id: integer('id').primaryKey(),

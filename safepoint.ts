@@ -67,6 +67,7 @@ function handler() {
 	console.error("safepoint: exit")
 
 	safepoint_terminate = true
+	handler_terminate()
 
 	if (safepoints.length > 0) {
 		console.error("safepoint: warning safepoint/s active, will exit soon")

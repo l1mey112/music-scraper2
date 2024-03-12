@@ -27,7 +27,7 @@ const scopes = [
 	"user-read-private",
 ].join(' ')
 
-export async function auth(): Promise<SpotifyApi> {
+async function spotify_auth(): Promise<SpotifyApi> {
 	const client_id = process.env.CLIENT_ID!
 	const client_secret = process.env.CLIENT_SECRET!
 	const client_redirect_uri = process.env.CLIENT_REDIRECT_URI!
@@ -99,91 +99,82 @@ export async function auth(): Promise<SpotifyApi> {
 	return sdk
 }
 
-export class Spotify {
-	api: SpotifyApi
-	user: User
+export let spotify_api: SpotifyApi
+export let spotify_user: User
 
-	static async make() {
-		const api = await auth()
-		const user = await api.currentUser.profile()
+export async function spotify_create() {
+	spotify_api = await spotify_auth()
+	spotify_user = await spotify_api.currentUser.profile()
 
-		console.log(`spotify: logged in as ${user.display_name}, ${user.id}`)
+	console.log(`spotify: logged in as ${spotify_user.display_name}, ${spotify_user.id}`)
 
-		const q = await db.schema.select({ count: sql<number>`count(*)` })
-			.from(schema.thirdparty_spotify_users)
-			.where(sql`spotify_id = ${user.id}`)
-			.limit(1)
+	const q = await db.schema.select({ count: sql<number>`count(*)` })
+		.from(schema.thirdparty_spotify_users)
+		.where(sql`spotify_id = ${spotify_user.id}`)
+		.limit(1)
 
-		if (q[0].count === 0) {
-			await db.schema.insert(schema.thirdparty_spotify_users)
-				.values({spotify_id: user.id})
-		}
-
-		return new Spotify(api, user)
+	if (q[0].count === 0) {
+		await db.schema.insert(schema.thirdparty_spotify_users)
+			.values({spotify_id: spotify_user.id})
 	}
+}
 
-	async index_liked_songs() {
-		const ini = await this.api.currentUser.tracks.savedTracks(1)
-		let total = ini.total
+export async function thirdparty_spotify_index_liked() {
+	const ini = await spotify_api.currentUser.tracks.savedTracks(1)
+	let total = ini.total
 
-		// incrementalism assumes that new songs are added to the top
+	// incrementalism assumes that new songs are added to the top
 
-		// TODO: currently scrapes to 50 incrementsm my 7235 songs go to 7250
-		//       how does that even happen? what data is the extra songs?
+	// TODO: currently scrapes to 50 incrementsm my 7235 songs go to 7250
+	//       how does that even happen? what data is the extra songs?
 
-		const db_count_q = await db.schema.select({ count: sql<number>`count(*)` })
-			.from(schema.thirdparty_spotify_saved_tracks)
-			.where(sql`spotify_user_id = ${this.user.id}`)
-		const db_count = db_count_q[0].count
+	const db_count_q = await db.schema.select({ count: sql<number>`count(*)` })
+		.from(schema.thirdparty_spotify_saved_tracks)
+		.where(sql`spotify_user_id = ${spotify_user.id}`)
+	const db_count = db_count_q[0].count
 
-		total -= db_count
+	total -= db_count
 
-		let offset = 0
+	let offset = 0
 
-		while (offset < total) {
-			const sp = safepoint('spotify.index_liked_songs.batch50')
-			
-			const utc_millis = new Date().getTime()
+	while (offset < total) {
+		const sp = safepoint('spotify.index_liked_songs.batch50')
+		
+		const utc_millis = Date.now()
 
-			const req = await this.api.currentUser.tracks.savedTracks(50, offset)
+		const req = await spotify_api.currentUser.tracks.savedTracks(50, offset)
 
-			const for_db_tracks: Track[] = []
-			const for_db_saved_tracks: (typeof schema.thirdparty_spotify_saved_tracks.$inferInsert)[] = []
+		const for_db_tracks: Track[] = []
+		const for_db_saved_tracks: (typeof schema.thirdparty_spotify_saved_tracks.$inferInsert)[] = []
 
-			for (const v of req.items) {
-				const track = v.track
+		for (const v of req.items) {
+			const track = v.track
 
-				if (track.is_local) {
-					console.log(`spotify: skipping local track ${track.name}, id: ${track.id}`)
-					continue
-				}
-
-				// spotify provides ISO 8601 date strings
-				const save_at_millis = new Date(v.added_at).getTime()
-
-				for_db_tracks.push(track)
-
-				for_db_saved_tracks.push({
-					save_utc: save_at_millis,
-					spotify_user_id: this.user.id,
-					spotify_track_id: track.id,
-					isrc: track.external_ids?.isrc,
-				})
+			if (track.is_local) {
+				console.log(`spotify: skipping local track ${track.name}, id: ${track.id}`)
+				continue
 			}
 
-			await db.append_spotify_v1_get_track(for_db_tracks, utc_millis)
-			await db.schema.insert(schema.thirdparty_spotify_saved_tracks)
-				.values(for_db_saved_tracks)
-				.onConflictDoNothing()
+			// spotify provides ISO 8601 date strings
+			const save_at_millis = new Date(v.added_at).getTime()
 
-			offset += 50
+			for_db_tracks.push(track)
 
-			sp.release()
+			for_db_saved_tracks.push({
+				save_utc: save_at_millis,
+				spotify_user_id: spotify_user.id,
+				spotify_track_id: track.id,
+				isrc: track.external_ids?.isrc,
+			})
 		}
-	}
 
-	constructor(api: SpotifyApi, user: User) {
-		this.api = api
-		this.user = user
+		await db.append_spotify_v1_get_track(for_db_tracks, utc_millis)
+		await db.schema.insert(schema.thirdparty_spotify_saved_tracks)
+			.values(for_db_saved_tracks)
+			.onConflictDoNothing()
+
+		offset += 50
+
+		sp.release()
 	}
 }
