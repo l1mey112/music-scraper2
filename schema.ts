@@ -33,7 +33,6 @@ export const track = sqliteTable('track', {
 	album_track_number: integer('album_track_number'), // 1 index based
 	album_disc_number: integer('album_disc_number'), // 1 index based
 
-	meta_spotify_id: text('meta_spotify_id'),
 	meta_isrc: text('meta_isrc'),
 });
 
@@ -53,7 +52,6 @@ export const album = sqliteTable('album', {
 	artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
 	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
-	meta_spotify_id: text('meta_spotify_id'),
 	meta_isrc: text('meta_isrc'),
 });
 
@@ -151,12 +149,11 @@ export const thirdparty_spotify_users = sqliteTable('thirdparty:spotify_users', 
 
 export const thirdparty_spotify_saved_tracks = sqliteTable('thirdparty:spotify_saved_tracks', {
 	id: integer('id').primaryKey(),
-	utc: integer('utc').notNull(), // utc epoch milliseconds
-	// referencing a spotify id may return information relating to a completely different id, but same released track
-	// for zero ambeguity, we need to store the actual database track id
-	//track_id: integer('track_id').$type<TrackId>().notNull().references(() => track.id),
+	save_utc: integer('utc').notNull(), // utc epoch milliseconds
 	spotify_user_id: text('spotify_user_id').notNull().references(() => thirdparty_spotify_users.spotify_id),
+	// many spotify track ids match to one isrc
+	// for zero ambiguity, we need to store the isrc
+	// you can then look up the isrc in the track table
 	spotify_track_id: text('spotify_track_id').notNull(),
-}, (t) => ({
-	unq: unique().on(t.spotify_track_id, t.spotify_user_id),
-}))
+	isrc: text('isrc'), // absolutely rare this is null
+})

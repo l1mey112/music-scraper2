@@ -4,7 +4,7 @@ import { db } from './db';
 import * as schema from './schema';
 import type { TrackEntry } from './schema';
 import { sql } from 'drizzle-orm';
-import { sigint_region, sigint_region_end } from './sigint';
+import { safepoint } from './safepoint';
 
 // fuckit
 const scopes = [
@@ -122,48 +122,35 @@ export class Spotify {
 		return new Spotify(api, user)
 	}
 
-	
-
-	// cache spotify liked songs using a watermark level and list of liked song ids
 	async index_liked_songs() {
-		const ini = await this.api.currentUser.tracks.savedTracks()
+		const ini = await this.api.currentUser.tracks.savedTracks(1)
+		let total = ini.total
 
-		const q = await db.schema.select({ count: sql<number>`count(*)` })
+		// incrementalism assumes that new songs are added to the top
+
+		// TODO: currently scrapes to 50 incrementsm my 7235 songs go to 7250
+		//       how does that even happen? what data is the extra songs?
+
+		const db_count_q = await db.schema.select({ count: sql<number>`count(*)` })
 			.from(schema.thirdparty_spotify_saved_tracks)
 			.where(sql`spotify_user_id = ${this.user.id}`)
+		const db_count = db_count_q[0].count
 
-		const db_count = q[0].count
+		total -= db_count
 
-		let offset = ini.total - db_count
+		let offset = 0
 
-		console.log(`spotify: user db: ${db_count}, amount: ${ini.total}, diff: ${offset}`)
-
-		// iterate
-		// start from the bottom and go up to using sighandlers to allow graceful exit
-
-		async function cleanup() {
-			const total = ini.total - offset
-
-			console.log(`spotify: total ${total} tracks`)
-
-			sigint_region_end()
-		}
-
-		sigint_region(async () => {
-			await cleanup()
-		})
-
-		while (true) {
-			let n_offset = offset <= 50 ? 0 : offset - 50
-
-			const utc_millis = new Date().getTime()
+		while (offset < total) {
+			const sp = safepoint('spotify.index_liked_songs.batch50')
 			
-			const k = await this.api.currentUser.tracks.savedTracks(50, n_offset)
+			const utc_millis = new Date().getTime()
+
+			const req = await this.api.currentUser.tracks.savedTracks(50, offset)
 
 			const for_db_tracks: Track[] = []
 			const for_db_saved_tracks: (typeof schema.thirdparty_spotify_saved_tracks.$inferInsert)[] = []
 
-			for (const v of k.items) {
+			for (const v of req.items) {
 				const track = v.track
 
 				if (track.is_local) {
@@ -172,14 +159,15 @@ export class Spotify {
 				}
 
 				// spotify provides ISO 8601 date strings
-				const added_at_millis = new Date(v.added_at).getTime()
+				const save_at_millis = new Date(v.added_at).getTime()
 
 				for_db_tracks.push(track)
 
 				for_db_saved_tracks.push({
-					utc: added_at_millis,
+					save_utc: save_at_millis,
 					spotify_user_id: this.user.id,
 					spotify_track_id: track.id,
+					isrc: track.external_ids?.isrc,
 				})
 			}
 
@@ -188,14 +176,10 @@ export class Spotify {
 				.values(for_db_saved_tracks)
 				.onConflictDoNothing()
 
-			offset = n_offset
+			offset += 50
 
-			if (offset == 0) {
-				break
-			}
+			sp.release()
 		}
-
-		await cleanup()
 	}
 
 	constructor(api: SpotifyApi, user: User) {

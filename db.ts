@@ -19,38 +19,25 @@ class DB {
 
 		// https://phiresky.github.io/blog/2020/sqlite-performance-tuning/
 		this.sqlite.exec("pragma journal_mode = WAL;");
-		this.sqlite.exec("pragma journal_mode = normal;"); // safe with WAL
+		this.sqlite.exec("pragma synchronous = normal;"); // safe with WAL
 	}
 
 	async extrapolate_spotify_v1_get_track(track: Track): Promise<TrackId | undefined> {
 		// identifying information
-		// 1. spotify_id
 		// 1. isrc
-		
-		const k0 = await this.schema.select({ id: schema.track.id })
-			.from(schema.track)
-			.where(sql`${schema.track.meta_spotify_id} = ${track.id}`)
 
-		if (k0.length > 1) {
-			console.error(`extrapolate_spotify_v1_get_track: warn multiple tracks with same spotify id ${track.id}`)
-		}
+		// remember, the spotify id isn't reliable for identifying tracks
+		// for many good reasons
 
-		if (track.external_ids.isrc) {
+		// rare to be null
+		if (track.external_ids?.isrc) {
 			const k1 = await this.schema.select({ id: schema.track.id })
 				.from(schema.track)
 				.where(sql`${schema.track.meta_isrc} = ${track.external_ids.isrc}`)
 
-			if (k1.length > 1) {
-				console.error(`extrapolate_spotify_v1_get_track: warn multiple tracks with same isrc ${track.external_ids.isrc}`)
-			}
-
 			if (k1.length != 0) {
 				return k1[0].id
 			}
-		}
-
-		if (k0.length != 0) {
-			return k0[0].id
 		}
 
 		return undefined
@@ -79,7 +66,13 @@ class DB {
 			if (track_id === undefined) {
 				// construct a new track entry
 
-				console.log(`append_spotify_v1_get_track: new track ${v.name}`)
+				const isrc = v.external_ids?.isrc ? v.external_ids?.isrc : null
+
+				if (!isrc) {
+					// spotify are assholes and it's possible any of these can be null
+					// but it's incredibly rare (100 in 1 000 000 tracks, trust me ive scraped a lot of data)
+					console.error(`append_spotify_v1_get_track: warn no isrc for track ${v.name} (id: ${v.id})`)
+				}
 
 				const k: TrackEntry = {
 					name: v.name,
@@ -87,8 +80,7 @@ class DB {
 
 					utc: utc_millis,
 
-					meta_spotify_id: v.id,
-					meta_isrc: v.external_ids?.isrc ? v.external_ids?.isrc : null, // spotify are assholes and it's possible any of these can be null
+					meta_isrc: isrc, 
 				}
 
 				// insert the track
@@ -105,3 +97,7 @@ class DB {
 }
 
 export const db = new DB();
+
+process.on("beforeExit", (code) => {
+	db.sqlite.close() // kill WALs and close the db, properly
+});
