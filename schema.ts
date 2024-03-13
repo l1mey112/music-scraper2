@@ -2,7 +2,7 @@ import { sqliteTable, integer, text, unique } from "drizzle-orm/sqlite-core";
 
 // stop polluting my namespace
 // spotify v1 api
-import type { Track, AudioFeatures, Album } from "@spotify/web-api-ts-sdk";
+import type { Track, AudioFeatures, Album, SimplifiedTrack } from "@spotify/web-api-ts-sdk";
 
 // {'default': 'cosMo@Bousou-P', 'ja-JP': 'cosMo@暴走P'}
 export type Locale = {
@@ -37,7 +37,6 @@ export const track = sqliteTable('track', {
 	meta_spotify_id: text('meta_spotify_id'), // unreliable
 });
 
-// TODO: fuckers colliding with Track
 export type TrackEntry = typeof track.$inferInsert
 
 export const album = sqliteTable('album', {
@@ -53,9 +52,13 @@ export const album = sqliteTable('album', {
 	artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
 	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
+	total_tracks: integer('total_tracks').notNull(),
+
 	meta_isrc: text('meta_isrc'), // absolute
 	meta_spotify_id: text('meta_spotify_id'), // unreliable
 });
+
+export type AlbumEntry = typeof album.$inferInsert
 
 // uniqueness is only checked on non null arguments?
 // https://sqlite.org/faq.html#q26
@@ -92,14 +95,16 @@ export type AlbumMeta = {
 
 // use `never` for unimplemented sources
 
-// remember, if a spotify track isn't available in this 
-
+export type SpotifyTrack = Track
+export type SpotifyAlbum = Album
+export type SpotifyAudioFeatures = AudioFeatures
+export type SpotifyAlbumTrack = SimplifiedTrack[] // pagination unwrapped
 
 export type TrackMetaId = number;
 export type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
 export type TrackMetaImpl = {
-	spotify_v1_get_track: Track,
-	spotify_v1_audio_features: AudioFeatures,
+	spotify_v1_get_track: SpotifyTrack,
+	spotify_v1_audio_features: SpotifyAudioFeatures,
 }
 
 // INFO: editing this means you have to update `upsert_track_meta`
@@ -116,6 +121,29 @@ export const track_meta = sqliteTable('track_meta', {
 
 export type TrackMetaEntry = typeof track_meta.$inferInsert & {
 	meta: TrackMetaImpl[TrackMetaSource] | null;
+}
+
+export type AlbumMetaId = number;
+export type AlbumMetaSource = 'spotify_v1_get_album' | 'spotify_v1_get_album_track'
+export type AlbumMetaImpl = {
+	spotify_v1_get_album: SpotifyAlbum,
+	spotify_v1_get_album_track: SpotifyAlbumTrack,
+}
+
+// INFO: editing this means you have to update `upsert_album_meta`
+export const album_meta = sqliteTable('album_meta', {
+	id: integer('id').$type<AlbumMetaId>().primaryKey(),
+	utc: integer('utc').notNull(), // utc epoch milliseconds
+	album_id: integer('album_id').notNull().references(() => album.id),
+
+	kind: text('kind').$type<AlbumMetaSource>().notNull(),
+	meta: text('meta', { mode: 'json' }), // null means failed
+}, (t) => ({
+	unq: unique().on(t.album_id, t.kind),
+}))
+
+export type AlbumMetaEntry = typeof album_meta.$inferInsert & {
+	meta: AlbumMetaImpl[AlbumMetaSource] | null;
 }
 
 /* export const media = sqliteTable('media', {
@@ -153,9 +181,8 @@ export const thirdparty_spotify_saved_tracks = sqliteTable('thirdparty:spotify_s
 	id: integer('id').primaryKey(),
 	save_utc: integer('utc').notNull(), // utc epoch milliseconds
 	spotify_user_id: text('spotify_user_id').notNull().references(() => thirdparty_spotify_users.spotify_id),
-	// many spotify track ids match to one isrc
-	// for zero ambiguity, we need to store the isrc
-	// you can then look up the isrc in the track table
-	spotify_track_id: text('spotify_track_id').notNull(),
-	isrc: text('isrc'), // absolutely rare this is null
-})
+	track_id: integer('track_id').notNull().references(() => track.id),
+}, (t) => ({
+	// a user can save multiple of the same underlying track at different times
+	unq: unique().on(t.spotify_user_id, t.track_id, t.save_utc),
+}))

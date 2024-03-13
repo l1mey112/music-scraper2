@@ -1,8 +1,7 @@
-import { SpotifyApi, type AccessToken, type User, type Track } from '@spotify/web-api-ts-sdk';
-import Database from 'bun:sqlite';
+import { SpotifyApi, type AccessToken, type User } from '@spotify/web-api-ts-sdk';
 import { db } from './db';
+import type { TrackEntry, TrackId, TrackMetaEntry } from './schema';
 import * as schema from './schema';
-import type { TrackEntry } from './schema';
 import { sql } from 'drizzle-orm';
 import { safepoint } from './safepoint';
 
@@ -25,13 +24,13 @@ const scopes = [
 	"user-library-read",
 	"user-read-email",
 	"user-read-private",
-].join(' ')
+]
 
-async function spotify_auth(): Promise<SpotifyApi> {
-	const client_id = process.env.CLIENT_ID!
-	const client_secret = process.env.CLIENT_SECRET!
-	const client_redirect_uri = process.env.CLIENT_REDIRECT_URI!
+const client_id = process.env.CLIENT_ID!
+const client_secret = process.env.CLIENT_SECRET!
+const client_redirect_uri = process.env.CLIENT_REDIRECT_URI!
 
+async function spotify_auth_user(): Promise<SpotifyApi> {
 	let sdk: SpotifyApi | undefined
 
 	console.log(`spotify: listening on http://localhost:8080/`)
@@ -46,7 +45,7 @@ async function spotify_auth(): Promise<SpotifyApi> {
 					const url = 'https://accounts.spotify.com/authorize' +
 						'?response_type=code' +
 						'&client_id=' + encodeURIComponent(client_id) +
-						'&scope=' + encodeURIComponent(scopes) +
+						'&scope=' + encodeURIComponent(scopes.join(' ')) +
 						'&redirect_uri=' + encodeURIComponent(client_redirect_uri)
 
 					return Response.redirect(url, 303)
@@ -100,11 +99,17 @@ async function spotify_auth(): Promise<SpotifyApi> {
 }
 
 export let spotify_api: SpotifyApi
+export let spotify_user_api: SpotifyApi
 export let spotify_user: User
 
 export async function spotify_create() {
-	spotify_api = await spotify_auth()
-	spotify_user = await spotify_api.currentUser.profile()
+	spotify_api = SpotifyApi.withClientCredentials(client_id, client_secret, scopes)
+	console.log(`spotify: created api instance with client credentials`)
+}
+
+export async function spotify_user_create() {
+	spotify_user_api = await spotify_auth_user()
+	spotify_user = await spotify_user_api.currentUser.profile()
 
 	console.log(`spotify: logged in as ${spotify_user.display_name}, ${spotify_user.id}`)
 
@@ -119,8 +124,11 @@ export async function spotify_create() {
 	}
 }
 
+// TODO: whilst it uses the current user, this can have issues if the track isn't available in the region
+//       for an unbiased API search/index, use the client credentials flow/not the saved tracks API.
+//       this will require double request/overhead
 export async function thirdparty_spotify_index_liked() {
-	const ini = await spotify_api.currentUser.tracks.savedTracks(1)
+	const ini = await spotify_user_api.currentUser.tracks.savedTracks(1)
 	let total = ini.total
 
 	// incrementalism assumes that new songs are added to the top
@@ -142,10 +150,9 @@ export async function thirdparty_spotify_index_liked() {
 		
 		const utc_millis = Date.now()
 
-		const req = await spotify_api.currentUser.tracks.savedTracks(50, offset)
-
-		const for_db_tracks: Track[] = []
-		const for_db_saved_tracks: (typeof schema.thirdparty_spotify_saved_tracks.$inferInsert)[] = []
+		const req = await spotify_user_api.currentUser.tracks.savedTracks(50, offset)
+		const saved_track_ids: TrackId[] = []
+		const saved_track_metas: TrackMetaEntry[] = []
 
 		for (const v of req.items) {
 			const track = v.track
@@ -156,25 +163,60 @@ export async function thirdparty_spotify_index_liked() {
 			}
 
 			// spotify provides ISO 8601 date strings
+			let existing_track_id = await db.extrapolate_spotify_v1_get_track(track)
+
+			if (existing_track_id === undefined) {
+				const isrc = track.external_ids?.isrc ? track.external_ids?.isrc : null
+
+				if (!isrc) {
+					// spotify are assholes and it's possible any of these can be null
+					// but it's incredibly rare (100 in 1 000 000 tracks, trust me ive scraped a lot of data)
+					console.error(`thirdparty_spotify_index_liked: warn no isrc for track ${v.track.name} (id: ${v.track.id})`)
+				}
+
+				const entry: TrackEntry = {
+					name: v.track.name,
+					name_locale: {},
+
+					utc: utc_millis,
+
+					meta_isrc: isrc, 
+					meta_spotify_id: v.track.id,
+				}
+
+				// insert the track
+				const k = await db.schema.insert(schema.track)
+					.values(entry)
+					.returning({ id: schema.track.id })
+				
+				existing_track_id = k[0].id
+			}
+
+			saved_track_metas.push({
+				track_id: existing_track_id,
+				kind: 'spotify_v1_get_track',
+				utc: utc_millis,
+				meta: track,
+			})
+			saved_track_ids.push(existing_track_id)
+		}
+		
+		const saved_tracks = req.items.map((v, idx) => {
 			const save_at_millis = new Date(v.added_at).getTime()
 
-			for_db_tracks.push(track)
-
-			for_db_saved_tracks.push({
+			return {
 				save_utc: save_at_millis,
 				spotify_user_id: spotify_user.id,
-				spotify_track_id: track.id,
-				isrc: track.external_ids?.isrc,
-			})
-		}
+				track_id: saved_track_ids[idx],
+			}
+		})
 
-		await db.append_spotify_v1_get_track(for_db_tracks, utc_millis)
+		await db.upsert_track_metas(saved_track_metas)
 		await db.schema.insert(schema.thirdparty_spotify_saved_tracks)
-			.values(for_db_saved_tracks)
+			.values(saved_tracks)
 			.onConflictDoNothing()
 
 		offset += 50
-
 		sp.release()
 	}
 }
