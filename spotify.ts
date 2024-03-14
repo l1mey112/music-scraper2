@@ -26,9 +26,14 @@ const scopes = [
 	"user-read-private",
 ]
 
-const client_id = process.env.CLIENT_ID!
-const client_secret = process.env.CLIENT_SECRET!
-const client_redirect_uri = process.env.CLIENT_REDIRECT_URI!
+export const client_id = process.env.CLIENT_ID!
+export const client_secret = process.env.CLIENT_SECRET!
+export const client_redirect_uri = process.env.CLIENT_REDIRECT_URI!
+
+if (!client_id || !client_secret || !client_redirect_uri) {
+	console.error('missing client id, client secret, or client redirect uri')
+	process.exit(1)
+}
 
 async function spotify_auth_user(): Promise<SpotifyApi> {
 	let sdk: SpotifyApi | undefined

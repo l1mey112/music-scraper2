@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "./db";
 import * as schema from "./schema";
-import { spotify_create, spotify_user_create, thirdparty_spotify_index_liked } from "./spotify";
+import { spotify_api, spotify_create, spotify_user_api, spotify_user_create, thirdparty_spotify_index_liked } from "./spotify";
 import { PassFlags, passes, passflags_string } from "./pass";
 
 const flags = passes.reduce((acc, v) => acc | v.flags, 0)
@@ -24,7 +24,16 @@ if (flags & PassFlags.spotify) {
 	process.exit(1)
 }
 
-for (const pass of passes) {
-	console.log(`running pass: ${pass.name} (flags: ${passflags_string(pass.flags)})`)
-	await pass.fn()
-}
+let changed
+
+do {
+	changed = false
+
+	for (const pass of passes) {
+		console.log(`running pass: ${pass.name} (flags: ${passflags_string(pass.flags)})`)
+
+		if (await pass.fn()) {
+			changed = true
+		}
+	}
+} while (changed)

@@ -47,6 +47,8 @@ async function pass_track_meta_spotify_v1_audio_features() {
 
 		offset = noffset
 	}
+
+	return k.length > 0 // mutation
 }
 
 // select all tracks without track meta
@@ -64,12 +66,14 @@ async function pass_track_meta_spotify_v1_get_track() {
 	for (const v of k) {
 		console.log(`pass_track_meta_spotify_v1_get_track: unimplemented for id ${v.id}`)
 	}
+
+	return false // no mutation
 }
 
-// insert a spotify id where tracks don't have it
+// tries to extrapolate identifiers from the track metadata
 // TODO: unimplemented for now
-async function pass_track_meta_spotify_id() {
-	const k = await db.schema.select()
+async function pass_track_meta_ident() {
+	/* const k = await db.schema.select()
 		.from(schema.track)
 		.where(sql`${schema.track.meta_spotify_id} is null`)
 
@@ -77,12 +81,18 @@ async function pass_track_meta_spotify_id() {
 
 	for (const v of k) {
 		console.log(`pass_track_meta_spotify_id: unimplemented for ${v.name} (id: ${v.id})`)
-	}
+	} */
+
+	// TODO: implement
+
+	return false // no mutation
 }
 
 // extrapolate albums from tracks and artists
+// TODO: currently spotify only, would get much bigger
+//       should extract into its own file?
 // TODO: extrapolate paginated artist albums into metadata, then use it here
-async function pass_album_spotify_album_extrapolate() {
+async function pass_album_extrapolate() {
 	// select all track metadata entries, they always contain albums
 
 	// force types
@@ -107,8 +117,6 @@ async function pass_album_spotify_album_extrapolate() {
 	// 1. spotify.album_extrapolate          (albums with reliable metadata + unreliable spotify id)
 	// 2. spotify.track_extrapolate          (tracks with reliable metadata + unreliable spotify id)
 
-	// TODO: spotify.track_extrapolate
-
 	// prune into a set
 	const albums = new Set<string>(k.map(v => v.meta.album.id))
 
@@ -129,8 +137,6 @@ async function pass_album_spotify_album_extrapolate() {
 	// make the requests in 20 id batches
 	let offset = 0
 	const album_spotify_ids = Array.from(albums)
-
-	console.log(`pass_album_spotify_album_extrapolate: ${album_spotify_ids.length} album ids to extrapolate`)
 
 	while (offset < album_spotify_ids.length) {
 		const sp = safepoint('spotify.album_extrapolate.batch20')
@@ -183,6 +189,8 @@ async function pass_album_spotify_album_extrapolate() {
 		sp.release()
 		offset = noffset
 	}
+
+	return album_spotify_ids.length > 0 // mutation
 }
 
 // insert a spotify id where albums don't have it
@@ -199,6 +207,8 @@ async function pass_album_meta_spotify_v1_get_album() {
 	for (const v of k) {
 		console.log(`pass_album_meta_spotify_v1_get_album: unimplemented for id ${v.id}`)
 	}
+
+	return false // no mutation
 }
 
 export enum PassFlags {
@@ -220,14 +230,14 @@ export function passflags_string(flags: number & PassFlags) {
 
 export type PassBlock = {
 	name: string
-	fn: () => Promise<void>
+	fn: () => Promise<boolean>
 	flags: number & PassFlags
 }
 
 export const passes: PassBlock[] = [
-	{ name: 'track.meta.spotify_id', fn: pass_track_meta_spotify_id, flags: PassFlags.spotify },
+	{ name: 'track.meta.ident', fn: pass_track_meta_ident, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_get_track', fn: pass_track_meta_spotify_v1_get_track, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_audio_features', fn: pass_track_meta_spotify_v1_audio_features, flags: PassFlags.spotify },
-	{ name: 'album.spotify.album_extrapolate', fn: pass_album_spotify_album_extrapolate, flags: PassFlags.spotify },
-	// { name: 'album.meta.spotify_v1_get_album', fn: pass_album_meta_spotify_v1_get_album, flags: PassFlags.spotify },
+	{ name: 'album.extrapolate', fn: pass_album_extrapolate, flags: PassFlags.spotify },
+	{ name: 'album.meta.spotify_v1_get_album', fn: pass_album_meta_spotify_v1_get_album, flags: PassFlags.spotify },
 ]

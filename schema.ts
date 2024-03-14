@@ -34,7 +34,7 @@ export const track = sqliteTable('track', {
 	album_disc_number: integer('album_disc_number'), // 1 index based
 
 	meta_isrc: text('meta_isrc'), // absolute
-	meta_spotify_id: text('meta_spotify_id'), // unreliable
+	meta_spotify_id: text('meta_spotify_id'), // unreliable, do not use to identify the track on the platform (metadata only)
 });
 
 export type TrackEntry = typeof track.$inferInsert
