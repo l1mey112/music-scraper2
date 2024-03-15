@@ -1,5 +1,5 @@
 // drizzle.config.ts
-import type { Config } from "drizzle-kit";
+import { Config } from "drizzle-kit";
 
 // bun run drizzle-kit generate:sqlite
 //

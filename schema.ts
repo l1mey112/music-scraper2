@@ -1,18 +1,7 @@
 import { sqliteTable, integer, text, unique } from "drizzle-orm/sqlite-core";
 
-// stop polluting my namespace
-// spotify v1 api
-import type { Track, AudioFeatures, Album, SimplifiedTrack } from "@spotify/web-api-ts-sdk";
 
-// {'default': 'cosMo@Bousou-P', 'ja-JP': 'cosMo@暴走P'}
-export type Locale = {
-	[locale: string]: string;
-}
-
-export type TrackId = number;
-export type AlbumId = number;
-export type ArtistId = number;
-export type MediaId = number;
+import { Locale, TrackId, AlbumId, ArtistId, TrackMetaId, TrackMetaSource, AlbumMetaId, AlbumMetaSource } from "./types";
 
 export const track = sqliteTable('track', {
 	id: integer('id').$type<TrackId>().primaryKey(),
@@ -32,12 +21,7 @@ export const track = sqliteTable('track', {
 	album_id: integer('album_id').$type<AlbumId>(),
 	album_track_number: integer('album_track_number'), // 1 index based
 	album_disc_number: integer('album_disc_number'), // 1 index based
-
-	meta_isrc: text('meta_isrc'), // absolute
-	meta_spotify_id: text('meta_spotify_id'), // unreliable, do not use to identify the track on the platform (metadata only)
-});
-
-export type TrackEntry = typeof track.$inferInsert
+})
 
 export const album = sqliteTable('album', {
 	id: integer('id').$type<AlbumId>().primaryKey(),
@@ -53,18 +37,19 @@ export const album = sqliteTable('album', {
 	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
 	total_tracks: integer('total_tracks').notNull(),
+})
 
-	meta_isrc: text('meta_isrc'), // absolute
-	meta_spotify_id: text('meta_spotify_id'), // unreliable
-});
+export const artist = sqliteTable('artist', {
+	id: integer('id').$type<ArtistId>().primaryKey(),
 
-export type AlbumEntry = typeof album.$inferInsert
+	name: text('name').notNull(),
+	name_locale: text('name_locale', { mode: 'json' }).$type<Locale>().notNull(),
+})
 
 // uniqueness is only checked on non null arguments?
 // https://sqlite.org/faq.html#q26
 
 // TODO: user defined metadata using a type, which is the closest ground truth
-
 
 //type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
 
@@ -95,40 +80,26 @@ export type AlbumMeta = {
 
 // use `never` for unimplemented sources
 
-export type SpotifyTrack = Track
-export type SpotifyAlbum = Album
-export type SpotifyAudioFeatures = AudioFeatures
-export type SpotifyAlbumTrack = SimplifiedTrack[] // pagination unwrapped
 
-export type TrackMetaId = number;
-export type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
-export type TrackMetaImpl = {
-	spotify_v1_get_track: SpotifyTrack,
-	spotify_v1_audio_features: SpotifyAudioFeatures,
-}
+
+
 
 // INFO: editing this means you have to update `upsert_track_meta`
 export const track_meta = sqliteTable('track_meta', {
 	id: integer('id').$type<TrackMetaId>().primaryKey(),
-	utc: integer('utc').notNull(), // utc epoch milliseconds
 	track_id: integer('track_id').notNull().references(() => track.id),
 
+	utc: integer('utc').notNull(), // utc epoch milliseconds
 	kind: text('kind').$type<TrackMetaSource>().notNull(),
 	meta: text('meta', { mode: 'json' }), // null means failed
 }, (t) => ({
 	unq: unique().on(t.track_id, t.kind),
 }))
 
-export type TrackMetaEntry = typeof track_meta.$inferInsert & {
-	meta: TrackMetaImpl[TrackMetaSource] | null;
-}
 
-export type AlbumMetaId = number;
-export type AlbumMetaSource = 'spotify_v1_get_album' | 'spotify_v1_get_album_track'
-export type AlbumMetaImpl = {
-	spotify_v1_get_album: SpotifyAlbum,
-	spotify_v1_get_album_track: SpotifyAlbumTrack,
-}
+
+
+
 
 // INFO: editing this means you have to update `upsert_album_meta`
 export const album_meta = sqliteTable('album_meta', {
@@ -142,9 +113,7 @@ export const album_meta = sqliteTable('album_meta', {
 	unq: unique().on(t.album_id, t.kind),
 }))
 
-export type AlbumMetaEntry = typeof album_meta.$inferInsert & {
-	meta: AlbumMetaImpl[AlbumMetaSource] | null;
-}
+
 
 /* export const media = sqliteTable('media', {
 	id: integer('id').$type<MediaId>().primaryKey(),

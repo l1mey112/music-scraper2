@@ -1,7 +1,8 @@
 import { drizzle } from 'drizzle-orm/bun-sqlite';
-import type { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
+import { BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import { Database } from 'bun:sqlite';
-import type { TrackEntry, TrackMetaEntry, TrackId, TrackMetaSource, TrackMetaImpl, SpotifyTrack, SpotifyAlbum, AlbumId, AlbumMetaEntry, AlbumEntry, AlbumMetaSource, AlbumMetaImpl } from './schema';
+import { TrackEntry, TrackMetaEntry, TrackMetaSource, TrackMetaImpl, SpotifyTrack, SpotifyAlbum, AlbumMetaEntry, AlbumEntry, AlbumMetaSource, AlbumMetaImpl } from './types';
+import { TrackId } from "./types";
 import * as schema from './schema';
 import { sql } from 'drizzle-orm';
 

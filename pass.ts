@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "./db"
-import type { TrackMetaEntry, TrackId, SpotifyTrack, AlbumEntry, AlbumMetaEntry, SpotifyAlbum } from './schema';
+import { TrackMetaEntry, SpotifyTrack, AlbumEntry, AlbumMetaEntry, SpotifyAlbum, TrackMetaSource, TrackId } from './types';
 import * as schema from './schema';
 import { spotify_api } from "./spotify";
 import { safepoint } from "./safepoint";
@@ -9,7 +9,7 @@ import { safepoint } from "./safepoint";
 async function pass_track_meta_spotify_v1_audio_features() {
 	// select all tracks without a single audio features in meta
 	// how could you express this better in drizzle?
-	const k = await db.schema.select({ id: schema.track.id, meta_spotify_id: schema.track.meta_spotify_id })
+	/* const k = await db.schema.select({ id: schema.track.id, meta_spotify_id: schema.track.meta_spotify_id })
 		.from(schema.track)
 		.where(sql`${schema.track.meta_spotify_id} is not null and not exists (
 			select 1
@@ -48,12 +48,13 @@ async function pass_track_meta_spotify_v1_audio_features() {
 		offset = noffset
 	}
 
-	return k.length > 0 // mutation
+	return k.length > 0 */ // mutation
+	return false
 }
 
 // select all tracks without track meta
 async function pass_track_meta_spotify_v1_get_track() {
-	const k = await db.schema.select({ id: schema.track.id, meta_spotify_id: schema.track.meta_spotify_id })
+	/* const k = await db.schema.select({ id: schema.track.id, meta_spotify_id: schema.track.meta_spotify_id })
 		.from(schema.track)
 		.where(sql`${schema.track.meta_spotify_id} is not null and not exists (
 			select 1
@@ -65,7 +66,7 @@ async function pass_track_meta_spotify_v1_get_track() {
 
 	for (const v of k) {
 		console.log(`pass_track_meta_spotify_v1_get_track: unimplemented for id ${v.id}`)
-	}
+	} */
 
 	return false // no mutation
 }
@@ -96,7 +97,7 @@ async function pass_album_extrapolate() {
 	// select all track metadata entries, they always contain albums
 
 	// force types
-	type Entry = { track_id: TrackId, meta: SpotifyTrack }
+	/* type Entry = { track_id: TrackId, meta: SpotifyTrack }
 
 	const k: Entry[] = (await db.schema.select({ meta: schema.track_meta.meta })
 		.from(schema.track_meta)
@@ -190,13 +191,14 @@ async function pass_album_extrapolate() {
 		offset = noffset
 	}
 
-	return album_spotify_ids.length > 0 // mutation
+	return album_spotify_ids.length > 0 */ // mutation
+	return false
 }
 
 // insert a spotify id where albums don't have it
 // TODO: unimplemented for now
 async function pass_album_meta_spotify_v1_get_album() {
-	const k = await db.schema.select({ id: schema.album.id, meta_spotify_id: schema.album.meta_spotify_id })
+	/* const k = await db.schema.select({ id: schema.album.id, meta_spotify_id: schema.album.meta_spotify_id })
 		.from(schema.album)
 		.where(sql`${schema.album.meta_spotify_id} is not null and not exists (
 			select 1
@@ -206,7 +208,7 @@ async function pass_album_meta_spotify_v1_get_album() {
 	
 	for (const v of k) {
 		console.log(`pass_album_meta_spotify_v1_get_album: unimplemented for id ${v.id}`)
-	}
+	} */
 
 	return false // no mutation
 }

@@ -1,6 +1,7 @@
 import { SpotifyApi, type AccessToken, type User } from '@spotify/web-api-ts-sdk';
 import { db } from './db';
-import type { TrackEntry, TrackId, TrackMetaEntry } from './schema';
+import { TrackEntry, TrackMetaEntry } from './types';
+import { TrackId } from "./types";
 import * as schema from './schema';
 import { sql } from 'drizzle-orm';
 import { safepoint } from './safepoint';
@@ -157,7 +158,7 @@ export async function thirdparty_spotify_index_liked() {
 
 		const req = await spotify_user_api.currentUser.tracks.savedTracks(50, offset)
 		const saved_track_ids: TrackId[] = []
-		const saved_track_metas: TrackMetaEntry[] = []
+		const saved_track_metas: TrackMetaEntry<'spotify_v1_get_track'>[] = []
 
 		for (const v of req.items) {
 			const track = v.track
