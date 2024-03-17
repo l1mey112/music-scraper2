@@ -1,6 +1,6 @@
 import { SpotifyApi, type AccessToken, type User } from '@spotify/web-api-ts-sdk';
-import { db } from './db';
-import { TrackEntry, TrackMetaEntry } from './types';
+import { db, upsert_intern_and_extrapolate_track } from './db';
+import { TrackEntry, TrackMeta, TrackMetaEntry } from './types';
 import { TrackId } from "./types";
 import * as schema from './schema';
 import { sql } from 'drizzle-orm';
@@ -119,13 +119,13 @@ export async function spotify_user_create() {
 
 	console.log(`spotify: logged in as ${spotify_user.display_name}, ${spotify_user.id}`)
 
-	const q = await db.schema.select({ count: sql<number>`count(*)` })
+	const q = await db.select({ count: sql<number>`count(*)` })
 		.from(schema.thirdparty_spotify_users)
 		.where(sql`spotify_id = ${spotify_user.id}`)
 		.limit(1)
 
 	if (q[0].count === 0) {
-		await db.schema.insert(schema.thirdparty_spotify_users)
+		await db.insert(schema.thirdparty_spotify_users)
 			.values({spotify_id: spotify_user.id})
 	}
 }
@@ -142,7 +142,7 @@ export async function thirdparty_spotify_index_liked() {
 	// TODO: currently scrapes to 50 incrementsm my 7235 songs go to 7250
 	//       how does that even happen? what data is the extra songs?
 
-	const db_count_q = await db.schema.select({ count: sql<number>`count(*)` })
+	const db_count_q = await db.select({ count: sql<number>`count(*)` })
 		.from(schema.thirdparty_spotify_saved_tracks)
 		.where(sql`spotify_user_id = ${spotify_user.id}`)
 	const db_count = db_count_q[0].count
@@ -158,7 +158,6 @@ export async function thirdparty_spotify_index_liked() {
 
 		const req = await spotify_user_api.currentUser.tracks.savedTracks(50, offset)
 		const saved_track_ids: TrackId[] = []
-		const saved_track_metas: TrackMetaEntry<'spotify_v1_get_track'>[] = []
 
 		for (const v of req.items) {
 			const track = v.track
@@ -168,46 +167,28 @@ export async function thirdparty_spotify_index_liked() {
 				continue
 			}
 
-			// spotify provides ISO 8601 date strings
-			let existing_track_id = await db.extrapolate_spotify_v1_get_track(track)
+			const isrc = track.external_ids?.isrc ? track.external_ids?.isrc : null
 
-			if (existing_track_id === undefined) {
-				const isrc = track.external_ids?.isrc ? track.external_ids?.isrc : null
-
-				if (!isrc) {
-					// spotify are assholes and it's possible any of these can be null
-					// but it's incredibly rare (100 in 1 000 000 tracks, trust me ive scraped a lot of data)
-					console.error(`thirdparty_spotify_index_liked: warn no isrc for track ${v.track.name} (id: ${v.track.id})`)
-				}
-
-				const entry: TrackEntry = {
-					name: v.track.name,
-					name_locale: {},
-
-					utc: utc_millis,
-
-					meta_isrc: isrc, 
-					meta_spotify_id: v.track.id,
-				}
-
-				// insert the track
-				const k = await db.schema.insert(schema.track)
-					.values(entry)
-					.returning({ id: schema.track.id })
-				
-				existing_track_id = k[0].id
+			if (!isrc) {
+				// spotify are assholes and it's possible any of these can be null
+				// but it's incredibly rare (100 in 1 000 000 tracks, trust me ive scraped a lot of data)
+				console.error(`thirdparty_spotify_index_liked: warn no isrc for track ${v.track.name} (id: ${v.track.id})`)
 			}
 
-			saved_track_metas.push({
-				track_id: existing_track_id,
+			const track_meta: TrackMeta = {
 				kind: 'spotify_v1_get_track',
 				utc: utc_millis,
-				meta: track,
-			})
-			saved_track_ids.push(existing_track_id)
+				meta: track,				
+			}
+
+			// they'll fill in the rest
+			const track_id = await upsert_intern_and_extrapolate_track([track_meta])
+
+			saved_track_ids.push(track_id)
 		}
-		
+
 		const saved_tracks = req.items.map((v, idx) => {
+			// spotify provides ISO 8601 date strings
 			const save_at_millis = new Date(v.added_at).getTime()
 
 			return {
@@ -217,8 +198,7 @@ export async function thirdparty_spotify_index_liked() {
 			}
 		})
 
-		await db.upsert_track_metas(saved_track_metas)
-		await db.schema.insert(schema.thirdparty_spotify_saved_tracks)
+		await db.insert(schema.thirdparty_spotify_saved_tracks)
 			.values(saved_tracks)
 			.onConflictDoNothing()
 

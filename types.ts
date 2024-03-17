@@ -4,11 +4,9 @@ import * as schema from "./schema"
 // spotify v1 api
 import { Album, AudioFeatures, SimplifiedTrack, Track } from "@spotify/web-api-ts-sdk"
 
-// {'default': 'cosMo@Bousou-P', 'ja-JP': 'cosMo@暴走P'}
-// TODO: not currently used
-export type Locale = {
-	[locale: string]: string
-}
+// {"name": "cosMo@Bousou-P", "locale": "en-US"}
+// {"name": "cosMo@暴走P", "locale": "ja-JP"}
+export type Locale = { name: string, locale?: string }
 
 export type TrackId = number
 export type AlbumId = number
@@ -28,30 +26,29 @@ export type SpotifyId = string
 export type Isrc = string
 
 export type TrackMetaId = number
-export type TrackMetaSource = keyof TrackMetaImpl // 'isrc' | 'spotify_id' | 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
-export type TrackMetaImpl = {
-	isrc: Isrc,
-	spotify_id: SpotifyId,
-	spotify_v1_get_track: SpotifyTrack,
-	spotify_v1_audio_features: SpotifyAudioFeatures,
-}
-
-export type TrackMeta<T extends TrackMetaSource> = Omit<TrackMetaEntry<T>, 'id' | 'track_id'>
-export type TrackMetaEntry<T extends TrackMetaSource> = typeof schema.track_meta.$inferInsert & {
-	kind: T
-	meta: TrackMetaImpl[T] | null
-}
-
 export type AlbumMetaId = number
-export type AlbumMetaSource = keyof AlbumMetaImpl
-export type AlbumMetaImpl = {
-	isrc: Isrc,
-	spotify_id: SpotifyId,
-	spotify_v1_get_album: SpotifyAlbum,
-	spotify_v1_get_album_track: SpotifyAlbumTrack,
-}
 
-export type AlbumMetaEntry<T extends AlbumMetaSource> = typeof schema.album_meta.$inferInsert & {
-    kind: T
-	meta: AlbumMetaImpl[T] | null
-}
+// ensure metadata is idempotent, storing no changing state
+// deepEquals is used for comparison
+
+// null means failed
+type TrackMetaImpl =
+	| { kind: 'name', meta: Locale } // 1 of each "locale" kind
+	| { kind: 'isrc', meta: Isrc | null } // 1
+	| { kind: 'spotify_id', meta: SpotifyId | null } // many
+	| { kind: 'spotify_v1_get_track', meta: SpotifyTrack } // one of each spotify_id
+	| { kind: 'spotify_v1_audio_features', meta: SpotifyAudioFeatures } // one of each spotify_id
+
+export type TrackMeta = Omit<typeof schema.track_meta.$inferInsert, 'id' | 'track_id'> & TrackMetaImpl
+export type TrackMetaEntry = typeof schema.track_meta.$inferInsert & TrackMetaImpl
+
+// null means failed
+export type AlbumMetaImpl =
+	| { kind: 'name', meta: Locale } // 1 of each "locale" kind
+	| { kind: 'isrc', meta: Isrc | null } // 1
+	| { kind: 'spotify_id', meta: SpotifyId | null } // many
+	| { kind: 'spotify_v1_get_album', meta: SpotifyAlbum } // one of each spotify_id
+	| { kind: 'spotify_v1_get_album_track', meta: SpotifyAlbumTrack } // one of each spotify_id
+
+export type AlbumMeta = Omit<typeof schema.album_meta.$inferInsert, 'id' | 'album_id'> & AlbumMetaImpl
+export type AlbumMetaEntry = typeof schema.album_meta.$inferInsert & AlbumMetaImpl

@@ -1,25 +1,66 @@
 import { sql } from "drizzle-orm";
-import { db } from "./db"
-import { TrackMetaEntry, SpotifyTrack, AlbumEntry, AlbumMetaEntry, SpotifyAlbum, TrackMetaSource, TrackId } from './types';
+import { db, pass_track_meta_weak } from "./db"
+import { TrackMetaEntry, SpotifyTrack, AlbumEntry, AlbumMetaEntry, SpotifyAlbum, TrackId, SpotifyAudioFeatures, SpotifyId } from './types';
 import * as schema from './schema';
 import { spotify_api } from "./spotify";
 import { safepoint } from "./safepoint";
 
+function one_of_each(kind0: string, kind1: string) {
+	return db.select({ track_id: schema.track_meta.track_id })
+		.from(schema.track_meta)
+		.where(sql`${schema.track_meta.kind} = ${kind0}`)
+		.groupBy(schema.track_meta.track_id)
+		.having(sql`count(*) != (select count(*) from ${schema.track_meta} where ${schema.track_meta.track_id} = ${schema.track_meta.track_id} and ${schema.track_meta.kind} = ${kind1})`)
+		.prepare()
+}
+
+const spotify_v1_get_track = one_of_each('spotify_id', 'spotify_v1_get_track')
+const spotify_v1_audio_features = one_of_each('spotify_id', 'spotify_v1_audio_features')
+
 // select all tracks without audio features in meta
-async function pass_track_meta_spotify_v1_audio_features() {
-	// select all tracks without a single audio features in meta
-	// how could you express this better in drizzle?
-	/* const k = await db.schema.select({ id: schema.track.id, meta_spotify_id: schema.track.meta_spotify_id })
-		.from(schema.track)
-		.where(sql`${schema.track.meta_spotify_id} is not null and not exists (
-			select 1
-			from ${schema.track_meta}
-			where ${schema.track_meta.track_id} = ${schema.track.id} and ${schema.track_meta.kind} = 'spotify_v1_audio_features'
-		)`)
+function pass_track_meta_spotify_v1_audio_features() {
+	// one of each spotify id
+	// so, if there are different amounts of audio features compared to spotify id meta on a track, we need to fetch them
+	// comparing `spotify_v1_audio_features` to `spotify_id`, if they differ in length, we need to fetch them
 
-	// batch all requests in size of 100
+	// select all track ids that have mismatching count of audio features to spotify ids
+	// this will ignore nulls
+	const k = spotify_v1_audio_features.all()
 
-	let offset = 0
+	const pair_trackid = []
+	const pair_spotifyid = []
+
+	// construct pairs of track id and spotify id
+	// diff out the existing audio features
+	for (const v of k) {
+		const spotify_id: { meta: SpotifyId }[] = db.select({ meta: schema.track_meta.meta })
+			.from(schema.track_meta)
+			.where(sql`${schema.track_meta.kind} = 'spotify_id' and ${schema.track_meta.track_id} = ${v.track_id}`)
+			.all() as any
+
+		const audio_features: { meta: SpotifyAudioFeatures | null }[] = db.select({ meta: schema.track_meta.meta })
+			.from(schema.track_meta)
+			.where(sql`${schema.track_meta.kind} = 'spotify_v1_audio_features' and ${schema.track_meta.track_id} = ${v.track_id}`)
+			.all() as any
+		
+		if (spotify_id.length === audio_features.length) {
+			console.error(`pass_meta_spotify_v1_audio_features: warn same count of audio features to spotify ids for track id ${v.track_id}`)
+		}
+
+		// diff out the existing audio features
+		// find all spotify ids that arent existing audio features
+
+		const spotify_id_new = spotify_id.filter(v => {
+			for (const w of audio_features) {
+				if (v.meta === w.meta) {
+					return false
+				}
+			}
+			return true
+		})
+	}
+
+	/* let offset = 0
 
 	while (offset < k.length) {
 		const sp = safepoint('spotify.index_liked_songs.batch50')
@@ -54,37 +95,12 @@ async function pass_track_meta_spotify_v1_audio_features() {
 
 // select all tracks without track meta
 async function pass_track_meta_spotify_v1_get_track() {
-	/* const k = await db.schema.select({ id: schema.track.id, meta_spotify_id: schema.track.meta_spotify_id })
-		.from(schema.track)
-		.where(sql`${schema.track.meta_spotify_id} is not null and not exists (
-			select 1
-			from ${schema.track_meta}
-			where ${schema.track_meta.track_id} = ${schema.track.id} and ${schema.track_meta.kind} = 'spotify_v1_get_track'
-		)`)
-
+	/*
 	// use spotify search feature to look for isrc
 
 	for (const v of k) {
 		console.log(`pass_track_meta_spotify_v1_get_track: unimplemented for id ${v.id}`)
 	} */
-
-	return false // no mutation
-}
-
-// tries to extrapolate identifiers from the track metadata
-// TODO: unimplemented for now
-async function pass_track_meta_ident() {
-	/* const k = await db.schema.select()
-		.from(schema.track)
-		.where(sql`${schema.track.meta_spotify_id} is null`)
-
-	// use spotify search feature to look for isrc
-
-	for (const v of k) {
-		console.log(`pass_track_meta_spotify_id: unimplemented for ${v.name} (id: ${v.id})`)
-	} */
-
-	// TODO: implement
 
 	return false // no mutation
 }
@@ -198,13 +214,7 @@ async function pass_album_extrapolate() {
 // insert a spotify id where albums don't have it
 // TODO: unimplemented for now
 async function pass_album_meta_spotify_v1_get_album() {
-	/* const k = await db.schema.select({ id: schema.album.id, meta_spotify_id: schema.album.meta_spotify_id })
-		.from(schema.album)
-		.where(sql`${schema.album.meta_spotify_id} is not null and not exists (
-			select 1
-			from ${schema.album_meta}
-			where ${schema.album_meta.album_id} = ${schema.album.id} and ${schema.album_meta.kind} = 'spotify_v1_get_album'
-		)`)
+	/*
 	
 	for (const v of k) {
 		console.log(`pass_album_meta_spotify_v1_get_album: unimplemented for id ${v.id}`)
@@ -213,7 +223,16 @@ async function pass_album_meta_spotify_v1_get_album() {
 	return false // no mutation
 }
 
+// TODO: touch the network to search for identifiers
+async function pass_track_meta_search_ident() {
+	// search for isrc
+	// search for spotify id
+
+	return false // no mutation
+}
+
 export enum PassFlags {
+	none = 0,
 	spotify = 1 << 0,
 	spotify_user = 1 << 1,
 }
@@ -227,6 +246,10 @@ export function passflags_string(flags: number & PassFlags) {
 		}
 	}
 
+	if (ret.length === 0) {
+		ret.push('none')
+	}
+
 	return ret.join(' | ')
 }
 
@@ -236,8 +259,10 @@ export type PassBlock = {
 	flags: number & PassFlags
 }
 
+// don't you just love phase ordering?
 export const passes: PassBlock[] = [
-	{ name: 'track.meta.ident', fn: pass_track_meta_ident, flags: PassFlags.spotify },
+	{ name: 'track.meta.weak', fn: pass_track_meta_weak, flags: PassFlags.none },
+	{ name: 'track.meta.search_ident', fn: pass_track_meta_search_ident, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_get_track', fn: pass_track_meta_spotify_v1_get_track, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_audio_features', fn: pass_track_meta_spotify_v1_audio_features, flags: PassFlags.spotify },
 	{ name: 'album.extrapolate', fn: pass_album_extrapolate, flags: PassFlags.spotify },

@@ -1,20 +1,15 @@
 import { sqliteTable, integer, text, unique } from "drizzle-orm/sqlite-core";
 
 
-import { Locale, TrackId, AlbumId, ArtistId, TrackMetaId, TrackMetaSource, AlbumMetaId, AlbumMetaSource } from "./types";
+import { Locale, TrackId, AlbumId, ArtistId, TrackMetaId, AlbumMetaId } from "./types";
 
 export const track = sqliteTable('track', {
 	id: integer('id').$type<TrackId>().primaryKey(),
 
-	name: text('name').notNull(),
-	name_locale: text('name_locale', { mode: 'json' }).$type<Locale>().notNull(),
-
-	utc: integer('utc').notNull(), // utc epoch milliseconds
-
 	// possibly null, meaning no artists yet
 	// can extrapolate artists based on existing metadata
-	artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
-	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
+	// artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
+	// artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
 	// possibly null, meaning no album yet
 	// can extrapolate albums based on existing metadata
@@ -26,24 +21,16 @@ export const track = sqliteTable('track', {
 export const album = sqliteTable('album', {
 	id: integer('id').$type<AlbumId>().primaryKey(),
 
-	name: text('name').notNull(),
-	name_locale: text('name_locale', { mode: 'json' }).$type<Locale>().notNull(),
-
-	utc: integer('utc').notNull(), // utc epoch milliseconds
-
 	// possibly null, meaning no artists yet
 	// can extrapolate artists based on existing metadata
-	artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
-	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
+	// artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
+	// artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
 	total_tracks: integer('total_tracks').notNull(),
 })
 
 export const artist = sqliteTable('artist', {
 	id: integer('id').$type<ArtistId>().primaryKey(),
-
-	name: text('name').notNull(),
-	name_locale: text('name_locale', { mode: 'json' }).$type<Locale>().notNull(),
 })
 
 // uniqueness is only checked on non null arguments?
@@ -90,30 +77,19 @@ export const track_meta = sqliteTable('track_meta', {
 	track_id: integer('track_id').notNull().references(() => track.id),
 
 	utc: integer('utc').notNull(), // utc epoch milliseconds
-	kind: text('kind').$type<TrackMetaSource>().notNull(),
-	meta: text('meta', { mode: 'json' }), // null means failed
-}, (t) => ({
-	unq: unique().on(t.track_id, t.kind),
-}))
-
-
-
-
-
+	kind: text('kind').notNull(),
+	meta: text('meta', { mode: 'json' }).notNull(),
+})
 
 // INFO: editing this means you have to update `upsert_album_meta`
 export const album_meta = sqliteTable('album_meta', {
 	id: integer('id').$type<AlbumMetaId>().primaryKey(),
-	utc: integer('utc').notNull(), // utc epoch milliseconds
 	album_id: integer('album_id').notNull().references(() => album.id),
 
-	kind: text('kind').$type<AlbumMetaSource>().notNull(),
-	meta: text('meta', { mode: 'json' }), // null means failed
-}, (t) => ({
-	unq: unique().on(t.album_id, t.kind),
-}))
-
-
+	utc: integer('utc').notNull(), // utc epoch milliseconds
+	kind: text('kind').notNull(),
+	meta: text('meta', { mode: 'json' }).notNull(),
+})
 
 /* export const media = sqliteTable('media', {
 	id: integer('id').$type<MediaId>().primaryKey(),
