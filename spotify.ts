@@ -1,6 +1,6 @@
-import { SpotifyApi, type AccessToken, type User } from '@spotify/web-api-ts-sdk';
-import { db, upsert_intern_and_extrapolate_track } from './db';
-import { TrackEntry, TrackMeta, TrackMetaEntry } from './types';
+import { SpotifyApi, AccessToken, User } from '@spotify/web-api-ts-sdk';
+import { db } from './db';
+import { TrackEntry } from './types';
 import { TrackId } from "./types";
 import * as schema from './schema';
 import { sql } from 'drizzle-orm';
@@ -119,14 +119,16 @@ export async function spotify_user_create() {
 
 	console.log(`spotify: logged in as ${spotify_user.display_name}, ${spotify_user.id}`)
 
-	const q = await db.select({ count: sql<number>`count(*)` })
+	const q = db.select({ count: sql<number>`count(*)` })
 		.from(schema.thirdparty_spotify_users)
 		.where(sql`spotify_id = ${spotify_user.id}`)
 		.limit(1)
+		.all()
 
 	if (q[0].count === 0) {
-		await db.insert(schema.thirdparty_spotify_users)
+		db.insert(schema.thirdparty_spotify_users)
 			.values({spotify_id: spotify_user.id})
+			.run()
 	}
 }
 
@@ -142,9 +144,10 @@ export async function thirdparty_spotify_index_liked() {
 	// TODO: currently scrapes to 50 incrementsm my 7235 songs go to 7250
 	//       how does that even happen? what data is the extra songs?
 
-	const db_count_q = await db.select({ count: sql<number>`count(*)` })
+	const db_count_q = db.select({ count: sql<number>`count(*)` })
 		.from(schema.thirdparty_spotify_saved_tracks)
 		.where(sql`spotify_user_id = ${spotify_user.id}`)
+		.all()
 	const db_count = db_count_q[0].count
 
 	total -= db_count
@@ -167,6 +170,7 @@ export async function thirdparty_spotify_index_liked() {
 				continue
 			}
 
+			const spotify_id = track.id
 			const isrc = track.external_ids?.isrc ? track.external_ids?.isrc : null
 
 			if (!isrc) {
@@ -175,14 +179,32 @@ export async function thirdparty_spotify_index_liked() {
 				console.error(`thirdparty_spotify_index_liked: warn no isrc for track ${v.track.name} (id: ${v.track.id})`)
 			}
 
-			const track_meta: TrackMeta = {
-				kind: 'spotify_v1_get_track',
-				utc: utc_millis,
-				meta: track,				
-			}
+			// select 1 track id match on spotify id
+			const k0 = db.select({ id: schema.track.id })
+				.from(schema.track)
+				.where(sql`meta_spotify_id = ${spotify_id}`)
+				.limit(1)
+				.all()
 
-			// they'll fill in the rest
-			const track_id = await upsert_intern_and_extrapolate_track([track_meta])
+			let track_id: TrackId | undefined = k0[0]?.id
+
+			if (!track_id) {
+				// insert track
+				const entry: TrackEntry = {
+					name: track.name,
+
+					meta_isrc: isrc,
+					meta_spotify_id: spotify_id,
+					meta_spotify_v1_get_track: track,
+				}
+
+				const k1 = db.insert(schema.track)
+					.values(entry)
+					.returning({ id: schema.track.id })
+					.all()
+				
+				track_id = k1[0].id
+			}
 
 			saved_track_ids.push(track_id)
 		}
@@ -198,9 +220,10 @@ export async function thirdparty_spotify_index_liked() {
 			}
 		})
 
-		await db.insert(schema.thirdparty_spotify_saved_tracks)
+		db.insert(schema.thirdparty_spotify_saved_tracks)
 			.values(saved_tracks)
 			.onConflictDoNothing()
+			.run()
 
 		offset += 50
 		sp.release()

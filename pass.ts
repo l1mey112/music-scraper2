@@ -1,234 +1,305 @@
 import { sql } from "drizzle-orm";
-import { db, pass_track_meta_weak } from "./db"
-import { TrackMetaEntry, SpotifyTrack, AlbumEntry, AlbumMetaEntry, SpotifyAlbum, TrackId, SpotifyAudioFeatures, SpotifyId } from './types';
+import { db } from "./db"
+import { SpotifyTrack, AlbumEntry, SpotifyAlbum, TrackId, SpotifyAudioFeatures, SpotifyId, AlbumId, ArtistId, TrackEntry } from './types';
 import * as schema from './schema';
 import { spotify_api } from "./spotify";
 import { safepoint } from "./safepoint";
 
-function one_of_each(kind0: string, kind1: string) {
-	return db.select({ track_id: schema.track_meta.track_id })
-		.from(schema.track_meta)
-		.where(sql`${schema.track_meta.kind} = ${kind0}`)
-		.groupBy(schema.track_meta.track_id)
-		.having(sql`count(*) != (select count(*) from ${schema.track_meta} where ${schema.track_meta.track_id} = ${schema.track_meta.track_id} and ${schema.track_meta.kind} = ${kind1})`)
-		.prepare()
+// register backoff for a pass if it failed and would be expensive to compute again
+
+// for now just make it never retry
+const retry_backoff_after_millis = 1000 * 60 * 60 * 24 * 365 * 1000 // 1000 years
+const retry_cutoff = Date.now() - retry_backoff_after_millis
+
+export function register_backoff_track(id: TrackId, pass_name: string) {
+	console.log(`register_backoff_track: registering backoff for track ${id} for pass ${pass_name}`)
+
+	db.insert(schema.pass_backoff)
+		.values({ track_id: id, utc: Date.now(), pass: pass_name })
+		.run()
 }
 
-const spotify_v1_get_track = one_of_each('spotify_id', 'spotify_v1_get_track')
-const spotify_v1_audio_features = one_of_each('spotify_id', 'spotify_v1_audio_features')
+export function register_backoff_album(id: AlbumId, pass_name: string) {
+	db.insert(schema.pass_backoff)
+		.values({ album_id: id, utc: Date.now(), pass: pass_name })
+		.run()
+}
 
-// select all tracks without audio features in meta
-function pass_track_meta_spotify_v1_audio_features() {
-	// one of each spotify id
-	// so, if there are different amounts of audio features compared to spotify id meta on a track, we need to fetch them
-	// comparing `spotify_v1_audio_features` to `spotify_id`, if they differ in length, we need to fetch them
+export function register_backoff_artist(id: ArtistId, pass_name: string) {
+	db.insert(schema.pass_backoff)
+		.values({ artist_id: id, utc: Date.now(), pass: pass_name })
+		.run()
+}
 
-	// select all track ids that have mismatching count of audio features to spotify ids
-	// this will ignore nulls
-	const k = spotify_v1_audio_features.all()
+// this can rarely fail, don't do backoff
+// it's not like we're looking up a track by name
+export async function pass_track_meta_spotify_v1_audio_features() {
+	// 1. tracks with a spotify id
+	// 2. tracks without audio features
+	// 3. tracks that don't have a backoff for this pass
+	// TODO: create a prepared statement builder for this
+	const k = db.select({ id: schema.track.id, meta_spotify_id: schema.track.meta_spotify_id })
+		.from(schema.track)
+		.where(sql`meta_spotify_id is not null and meta_spotify_v1_audio_features is null and id not in (
+			select track_id from pass_backoff where pass = 'track.meta.spotify_v1_audio_features'
+			and utc > ${retry_cutoff}
+		)`)
+		.all()
 
-	const pair_trackid = []
-	const pair_spotifyid = []
-
-	// construct pairs of track id and spotify id
-	// diff out the existing audio features
-	for (const v of k) {
-		const spotify_id: { meta: SpotifyId }[] = db.select({ meta: schema.track_meta.meta })
-			.from(schema.track_meta)
-			.where(sql`${schema.track_meta.kind} = 'spotify_id' and ${schema.track_meta.track_id} = ${v.track_id}`)
-			.all() as any
-
-		const audio_features: { meta: SpotifyAudioFeatures | null }[] = db.select({ meta: schema.track_meta.meta })
-			.from(schema.track_meta)
-			.where(sql`${schema.track_meta.kind} = 'spotify_v1_audio_features' and ${schema.track_meta.track_id} = ${v.track_id}`)
-			.all() as any
-		
-		if (spotify_id.length === audio_features.length) {
-			console.error(`pass_meta_spotify_v1_audio_features: warn same count of audio features to spotify ids for track id ${v.track_id}`)
-		}
-
-		// diff out the existing audio features
-		// find all spotify ids that arent existing audio features
-
-		const spotify_id_new = spotify_id.filter(v => {
-			for (const w of audio_features) {
-				if (v.meta === w.meta) {
-					return false
-				}
-			}
-			return true
-		})
-	}
-
-	/* let offset = 0
+	let offset = 0
 
 	while (offset < k.length) {
-		const sp = safepoint('spotify.index_liked_songs.batch50')
-		const noffset = offset + 100
+		const sp = safepoint('pass.track.meta.spotify_v1_audio_features.batch100')
+		const noffset = offset + 100 // 100 is the maximum batch size
 		const batch = k.slice(offset, noffset)
 		const ids = batch.map(v => v.meta_spotify_id!) // definitely not null
-		const utc = Date.now()
-		const features = await spotify_api.tracks.audioFeatures(ids)
+		// these can be null they are a liar
+		const features: (SpotifyAudioFeatures | null)[] = await spotify_api.tracks.audioFeatures(ids)
 
-		// assume that they're all in order, ive tested a couple of times
-
-		// console.log(`pass_meta_spotify_v1_audio_features: batch ${offset} to ${noffset} (slice: ${ids.length}, total: ${k.length})`)
-
-		const entries: TrackMetaEntry[] = features.map((v, i) => {
-			return {
-				track_id: batch[i].id,
-				kind: 'spotify_v1_audio_features',
-				utc: utc,
-				meta: v,
+		for (const feature of features) {
+			if (!feature) {
+				register_backoff_track(k[offset].id, 'track.meta.spotify_v1_audio_features')
+				continue
 			}
-		})
 
-		await db.upsert_track_metas(entries)
+			db.update(schema.track)
+				.set({ meta_spotify_v1_audio_features: feature })
+				.where(sql`meta_spotify_id = ${feature.id}`)
+				.run()
+		}
+
 		sp.release()
-
 		offset = noffset
 	}
 
-	return k.length > 0 */ // mutation
-	return false
+	return k.length > 0 // mutation
 }
 
-// select all tracks without track meta
-async function pass_track_meta_spotify_v1_get_track() {
-	/*
-	// use spotify search feature to look for isrc
+export async function pass_track_meta_spotify_v1_get_track() {
+	const k = db.select({ id: schema.track.id, meta_spotify_id: schema.track.meta_spotify_id })
+		.from(schema.track)
+		.where(sql`meta_spotify_id is not null and meta_spotify_v1_get_track is null and id not in (
+			select track_id from pass_backoff where pass = 'track.meta.spotify_v1_get_track'
+			and utc > ${retry_cutoff}
+		)`)
+		.all()
+	
+	let offset = 0
 
-	for (const v of k) {
-		console.log(`pass_track_meta_spotify_v1_get_track: unimplemented for id ${v.id}`)
-	} */
+	// > A comma-separated list of the Spotify IDs. For example: ...
+	// > Maximum: 100 IDs.
 
-	return false // no mutation
+	// they lied here, it's 50
+
+	while (offset < k.length) {
+		const sp = safepoint('pass.track.meta.spotify_v1_get_track.batch100')
+		const noffset = offset + 50 // 50 is the maximum batch size
+		const batch = k.slice(offset, noffset)
+		const ids = batch.map(v => v.meta_spotify_id!) // definitely not null
+		const tracks = await spotify_api.tracks.get(ids)
+
+		for (const track of tracks) {
+			db.update(schema.track)
+				.set({ meta_spotify_v1_get_track: track })
+				.where(sql`meta_spotify_id = ${track.id}`)
+				.run()
+		}
+
+		sp.release()
+		offset = noffset
+	}
 }
 
-// extrapolate albums from tracks and artists
-// TODO: currently spotify only, would get much bigger
-//       should extract into its own file?
-// TODO: extrapolate paginated artist albums into metadata, then use it here
-async function pass_album_extrapolate() {
-	// select all track metadata entries, they always contain albums
-
-	// force types
-	/* type Entry = { track_id: TrackId, meta: SpotifyTrack }
-
-	const k: Entry[] = (await db.schema.select({ meta: schema.track_meta.meta })
-		.from(schema.track_meta)
-		.where(sql`${schema.track_meta.kind} = 'spotify_v1_get_track'`)) as Entry[]
-
-	// to avoid weird phase ordering, construct the absolute identifiers as soon as possible now
-	// same issue as the track thing, insertions and queries based on unreliable identifiers
-	// (spotify ids) this can cause duplicate data which also must be interned.
-	// that is annoying, do it all in one go.
-	// also keep in mind that creating an article of data must contain at least one absolute identifier
-
-	// 1. spotify.album_extrapolate          (albums with unreliable spotify id)
-	// 2. spotify.meta.spotify_v1_get_album  (albums get reliable metadata)
-	// 3. spotify.album_duplicates           (intern albums with duplicate reliable metadata but different unreliable spotify id)
-	// 4. spotify.track_extrapolate          (tracks with unreliable spotify id)
-	//    continue the cycle...
-
-	// 1. spotify.album_extrapolate          (albums with reliable metadata + unreliable spotify id)
-	// 2. spotify.track_extrapolate          (tracks with reliable metadata + unreliable spotify id)
+// creates `spotify_v1_get_album` metadata
+export async function pass_album_spotify_extrapolate() {
+	// select all tracks with a spotify_v1_get_track and no album id
+	// assume that if spotify_v1_get_track is present, then the spotify id is present too
+	const k0 = db.select({ id: schema.track.id, meta_spotify_v1_get_track: schema.track.meta_spotify_v1_get_track })
+		.from(schema.track)
+		.where(sql`meta_spotify_v1_get_track is not null and album_id is null and id not in (
+			select track_id from pass_backoff where pass = 'album.spotify_extrapolate'
+			and utc > ${retry_cutoff}
+		)`)
+		.all()
+	
+	// given a list of spotify track ids, get the album ids
 
 	// prune into a set
-	const albums = new Set<string>(k.map(v => v.meta.album.id))
+	// TODO: spotify_v1_get_track stores more information than needed tbh
+	// TODO: should remove unneeded stuff most of the album information
+	const albums = new Set(k0.map(v => v.meta_spotify_v1_get_track!.album.id))
 
-	// try to prune the dataset again by removing spotify ids that we already have, this won't get all
-	// of them though. we'll still have duplicates which will be weeded out anyway
+	// remove albums that already have a spotify id
 
-	// selecting everything not in the set isn't really possible in SQL efficiently?
-	// it's going to hurt requesting this much data
-
-	const k2 = await db.schema.select({ meta_spotify_id: schema.album.meta_spotify_id })
+	const k1 = db.select({ meta_spotify_id: schema.album.meta_spotify_id })
 		.from(schema.album)
-		.where(sql`${schema.album.meta_spotify_id} is not null`)
+		.where(sql`meta_spotify_id is not null`)
+		.all()
 	
-	for (const v of k2) {
+	for (const v of k1) {
 		albums.delete(v.meta_spotify_id!)
 	}
 
-	// make the requests in 20 id batches
 	let offset = 0
 	const album_spotify_ids = Array.from(albums)
 
+	if (album_spotify_ids.length === 0) {
+		return false // no mutation
+	}
+
 	while (offset < album_spotify_ids.length) {
-		const sp = safepoint('spotify.album_extrapolate.batch20')
+		const sp = safepoint('pass.album.spotify_extrapolate.batch20')
 		const noffset = offset + 20
 		const batch = album_spotify_ids.slice(offset, noffset)
-		const utc = Date.now()
 		const albums = await spotify_api.albums.get(batch)
 
-		const album_ids: TrackId[] = []
+		for (const album of albums) {
+			// @ts-ignore
+			delete album.tracks // just fucking let me
 
-		for (const v of albums) {
-			let existing_album_id = await db.extrapolate_spotify_v1_get_album(v)
-
-			if (existing_album_id === undefined) {
-				const album_entry: AlbumEntry = {
-					name: v.name,
-					name_locale: {},
-
-					utc: utc,
-
-					total_tracks: v.total_tracks,
-
-					meta_isrc: v.external_ids?.isrc,
-					meta_spotify_id: v.id,
-				}
-
-				const r = await db.schema.insert(schema.album)
-					.values(album_entry)
-					.returning({ id: schema.album.id })
-				
-				existing_album_id = r[0].id
+			// spotify albums never have an ISRC, never. they don't have it
+			if (album.external_ids?.isrc) {
+				console.error(`pass.album.spotify_extrapolate: warn album ${album.name} (id: ${album.id}) has an ISRC (how lucky?)`)
 			}
 
-			album_ids.push(existing_album_id)
+			const entry: AlbumEntry = {
+				name: album.name,
+
+				meta_spotify_id: album.id,
+				meta_spotify_v1_get_album: album,
+			}
+
+			db.insert(schema.album)
+				.values(entry)
+				.run()
 		}
-
-		const album_metas: AlbumMetaEntry[] = albums.map((v, idx) => {
-			return {
-				utc: utc,
-				album_id: album_ids[idx],
-				kind: 'spotify_v1_get_album',
-				meta: v,
-			}
-		})
-
-		console.log(`pass_album_spotify_album_extrapolate: batch ${offset} to ${noffset} (slice: ${batch.length}, total: ${album_spotify_ids.length})`)
-
-		await db.upsert_album_metas(album_metas)
 
 		sp.release()
 		offset = noffset
 	}
 
-	return album_spotify_ids.length > 0 */ // mutation
-	return false
+	return true // mutation
 }
 
-// insert a spotify id where albums don't have it
-// TODO: unimplemented for now
-async function pass_album_meta_spotify_v1_get_album() {
-	/*
+// rare, but inserted for completeness
+export async function pass_album_meta_spotify_v1_get_album() {
+	const k = db.select({ id: schema.album.id, meta_spotify_id: schema.album.meta_spotify_id })
+		.from(schema.album)
+		.where(sql`meta_spotify_id is not null and meta_spotify_v1_get_album is null and id not in (
+			select album_id from pass_backoff where pass = 'album.meta.spotify_v1_get_album'
+			and utc > ${retry_cutoff}
+		)`)
+		.all()
 	
-	for (const v of k) {
-		console.log(`pass_album_meta_spotify_v1_get_album: unimplemented for id ${v.id}`)
-	} */
+	let offset = 0
 
-	return false // no mutation
+	while (offset < k.length) {
+		const sp = safepoint('pass.album.meta.spotify_v1_get_album.batch20')
+		const noffset = offset + 20 // 20 is the maximum batch size
+		const batch = k.slice(offset, noffset)
+		const ids = batch.map(v => v.meta_spotify_id!) // definitely not null
+		const albums = await spotify_api.albums.get(ids)
+
+		for (const album of albums) {
+			db.update(schema.album)
+				.set({ meta_spotify_v1_get_album: album })
+				.where(sql`meta_spotify_id = ${album.id}`)
+				.run()
+		}
+
+		sp.release()
+		offset = noffset
+	}
+
+	return k.length > 0 // mutation
 }
 
-// TODO: touch the network to search for identifiers
-async function pass_track_meta_search_ident() {
-	// search for isrc
-	// search for spotify id
+// doesn't depend on `spotify_v1_get_album`
+// creates new tracks without any metadata other than spotify id
+export async function pass_track_spotify_album_extrapolate() {
+	// select all albums with null total tracks and a spotify id
 
-	return false // no mutation
+	const k = db.select({ id: schema.album.id, meta_spotify_id: schema.album.meta_spotify_id })
+		.from(schema.album)
+		.where(sql`meta_spotify_id is not null and total_tracks is null and id not in (
+			select album_id from pass_backoff where pass = 'track.spotify_album_extrapolate'
+			and utc > ${retry_cutoff}
+		)`)
+		.all()
+	
+	// for every single album, get the tracks
+
+	for (const db_album of k) {
+		const sp = safepoint('pass.track.spotify_album_extrapolate')
+		
+		// find all tracks
+		let offset = 0
+		const album_tracks = []
+
+		let total
+
+		do {
+			const req = await spotify_api.albums.tracks(db_album.meta_spotify_id!, undefined, 50, offset)
+			if (!total) {
+				total = req.total
+			}
+			album_tracks.push(...req.items)
+			offset += 50
+		} while (album_tracks.length < total)
+
+		// copied logic from `thirdparty_spotify_index_liked`
+
+		// update tracks
+		// insert new tracks if they don't exist
+		for (const track of album_tracks) {
+			const spotify_id = track.id
+
+			const k0 = db.select({ id: schema.track.id })
+				.from(schema.track)
+				.where(sql`meta_spotify_id = ${spotify_id}`)
+				.limit(1)
+				.all()
+			
+			const track_id: TrackId | undefined = k0[0]?.id
+
+			if (!track_id) {
+				// insert track
+				const entry: TrackEntry = {
+					name: track.name,
+
+					meta_spotify_id: spotify_id,
+
+					album_id: db_album.id,
+					album_track_number: track.track_number,
+					album_disc_number: track.disc_number,
+				}
+
+				const k1 = db.insert(schema.track)
+					.values(entry)
+					.returning({ id: schema.track.id })
+					.all()
+			} else {
+				// update track
+
+				db.update(schema.track)
+					.set({
+						album_id: db_album.id,
+						album_track_number: track.track_number,
+						album_disc_number: track.disc_number,
+					})
+					.where(sql`meta_spotify_id = ${spotify_id}`)
+					.run()
+			}
+		}
+
+		// set total tracks, and close the loop
+		db.update(schema.album)
+			.set({ total_tracks: total })
+			.where(sql`id = ${db_album.id}`)
+			.run()
+
+		sp.release()
+	}
 }
 
 export enum PassFlags {
@@ -260,11 +331,12 @@ export type PassBlock = {
 }
 
 // don't you just love phase ordering?
-export const passes: PassBlock[] = [
-	{ name: 'track.meta.weak', fn: pass_track_meta_weak, flags: PassFlags.none },
-	{ name: 'track.meta.search_ident', fn: pass_track_meta_search_ident, flags: PassFlags.spotify },
+export const passes = [
+	// { name: 'track.meta.weak', fn: pass_track_meta_weak, flags: PassFlags.none },
+	// { name: 'track.meta.search_ident', fn: pass_track_meta_search_ident, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_get_track', fn: pass_track_meta_spotify_v1_get_track, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_audio_features', fn: pass_track_meta_spotify_v1_audio_features, flags: PassFlags.spotify },
-	{ name: 'album.extrapolate', fn: pass_album_extrapolate, flags: PassFlags.spotify },
+	{ name: 'album.spotify_extrapolate', fn: pass_album_spotify_extrapolate, flags: PassFlags.spotify },
 	{ name: 'album.meta.spotify_v1_get_album', fn: pass_album_meta_spotify_v1_get_album, flags: PassFlags.spotify },
+	{ name: 'track.spotify_album_extrapolate', fn: pass_track_spotify_album_extrapolate, flags: PassFlags.spotify },
 ]

@@ -30,6 +30,16 @@ do {
 	changed = false
 
 	for (const pass of passes) {
+		// stats
+		/* const stats = db.select({
+			track_count: sql`count(${schema.track.id})`,
+			album_count: sql`count(${schema.album.id})`,
+			artist_count: sql`count(${schema.artist.id})`,
+		})
+			.from(schema.track) */
+		
+		//console.log(`stats: ${JSON.stringify(stats)}`)
+
 		console.log(`running pass: ${pass.name} (flags: ${passflags_string(pass.flags)})`)
 
 		if (await pass.fn()) {

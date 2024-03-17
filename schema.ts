@@ -1,95 +1,68 @@
 import { sqliteTable, integer, text, unique } from "drizzle-orm/sqlite-core";
 
 
-import { Locale, TrackId, AlbumId, ArtistId, TrackMetaId, AlbumMetaId } from "./types";
+import { Locale, TrackId, AlbumId, ArtistId, SpotifyTrack, Isrc, SpotifyId, SpotifyAudioFeatures, SpotifyAlbum } from "./types";
 
 export const track = sqliteTable('track', {
 	id: integer('id').$type<TrackId>().primaryKey(),
 
-	// possibly null, meaning no artists yet
-	// can extrapolate artists based on existing metadata
-	// artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
-	// artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
+	name: text('name').notNull(),
+	// locale: text('locale', { mode: 'json' }).$type<Locale>(),
 
-	// possibly null, meaning no album yet
-	// can extrapolate albums based on existing metadata
-	album_id: integer('album_id').$type<AlbumId>(),
-	album_track_number: integer('album_track_number'), // 1 index based
-	album_disc_number: integer('album_disc_number'), // 1 index based
+	// need joining table for efficiency
+	// also apply their purpose in creation of the track too
+	// TODO: scrape spotify song credits to use this
+	/* artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
+	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), */ // ArtistId[]
+
+	album_id: integer('album_id').$type<AlbumId>(), // check null first to use `track_number` and `disc_number`
+	album_track_number: integer('album_track_number').$default(() => 0).notNull(), // 1 index based
+	album_disc_number: integer('album_disc_number').$default(() => 0).notNull(), // 1 index based
+
+	meta_isrc: text('meta_isrc').$type<Isrc>(),
+	meta_spotify_id: text('meta_spotify_id').$type<SpotifyId>(),
+	meta_spotify_v1_get_track: text('meta_spotify_v1_get_track', { mode: 'json' }).$type<SpotifyTrack>(),
+	meta_spotify_v1_audio_features: text('meta_spotify_v1_audio_features', { mode: 'json' }).$type<SpotifyAudioFeatures>(),
 })
 
 export const album = sqliteTable('album', {
 	id: integer('id').$type<AlbumId>().primaryKey(),
 
-	// possibly null, meaning no artists yet
-	// can extrapolate artists based on existing metadata
+	name: text('name').notNull(),
+	// locale: text('locale', { mode: 'json' }).$type<Locale>(),
+
+	// null means unknown
+	total_tracks: integer('total_tracks'),
+	
+	// TODO: possibly ignore and create this on the fly using tracks inside?
 	// artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
 	// artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
-	total_tracks: integer('total_tracks').notNull(),
+	meta_isrc: text('meta_isrc').$type<Isrc>(),
+	meta_spotify_id: text('meta_spotify_id').$type<SpotifyId>(),
+	meta_spotify_v1_get_album: text('meta_spotify_v1_get_album', { mode: 'json' }).$type<SpotifyAlbum>(),
 })
 
 export const artist = sqliteTable('artist', {
 	id: integer('id').$type<ArtistId>().primaryKey(),
 })
 
-// uniqueness is only checked on non null arguments?
-// https://sqlite.org/faq.html#q26
+// pass backoff for metadata
+export const pass_backoff = sqliteTable('pass_backoff', {
+	id: integer('id').primaryKey(),
+	utc: integer('utc').notNull(),
+
+	// one of these should be not null
+	track_id: integer('track_id').references(() => track.id),
+	album_id: integer('album_id').references(() => album.id),
+	artist_id: integer('artist_id').references(() => artist.id),
+
+	pass: text('pass').notNull(),
+})
 
 // TODO: user defined metadata using a type, which is the closest ground truth
 
 //type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
-
-/* export type TrackMeta = {
-	[K in TrackMetaSource]: {
-		src: K;
-		utc: number; // utc epoch milliseconds
-		data: TrackMetaImpl[K] | null; // null means failed
-	};
-}[TrackMetaSource] */
-
-/* type AlbumMetaImpl = {
-	// spotify album returns track list as a paginated API chain
-	// it's nice to store, but we can't read track list from album
-	spotify_v1_get_album: Album,
-	// youtube: never,
-}
-
-type AlbumMetaSource = 'spotify_v1_get_album' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
-
-export type AlbumMeta = {
-	[K in AlbumMetaSource]: {
-		src: K;
-		utc: number; // utc epoch milliseconds
-		data: AlbumMetaImpl[K] | null; // null means failed
-	};
-}[AlbumMetaSource] */
-
-// use `never` for unimplemented sources
-
-
-
-
-
-// INFO: editing this means you have to update `upsert_track_meta`
-export const track_meta = sqliteTable('track_meta', {
-	id: integer('id').$type<TrackMetaId>().primaryKey(),
-	track_id: integer('track_id').notNull().references(() => track.id),
-
-	utc: integer('utc').notNull(), // utc epoch milliseconds
-	kind: text('kind').notNull(),
-	meta: text('meta', { mode: 'json' }).notNull(),
-})
-
-// INFO: editing this means you have to update `upsert_album_meta`
-export const album_meta = sqliteTable('album_meta', {
-	id: integer('id').$type<AlbumMetaId>().primaryKey(),
-	album_id: integer('album_id').notNull().references(() => album.id),
-
-	utc: integer('utc').notNull(), // utc epoch milliseconds
-	kind: text('kind').notNull(),
-	meta: text('meta', { mode: 'json' }).notNull(),
-})
 
 /* export const media = sqliteTable('media', {
 	id: integer('id').$type<MediaId>().primaryKey(),
