@@ -18,5 +18,7 @@ export const db: BunSQLiteDatabase<typeof schema> = drizzle(sqlite, { schema })
 process.on("beforeExit", (code) => {
 	sqlite.exec("pragma wal_checkpoint(TRUNCATE);") // checkpoint WAL
 	sqlite.exec("pragma journal_mode = DELETE;") // delete wal
+	sqlite.exec("pragma vacuum;") // vacuum
+	sqlite.exec("pragma optimize;") // optimize
 	sqlite.close() // close the db
 })

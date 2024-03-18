@@ -1,5 +1,5 @@
 import { sqliteTable, integer, text, unique } from "drizzle-orm/sqlite-core";
-import { Locale, TrackId, AlbumId, ArtistId, SpotifyTrack, Isrc, SpotifyId, SpotifyAudioFeatures, SpotifyAlbum, SpotifyArtist, QobuzId } from "./types";
+import { Locale, TrackId, AlbumId, ArtistId, SpotifyTrack, Isrc, SpotifyId, SpotifyAudioFeatures, SpotifyAlbum, SpotifyArtist, QobuzId, QobuzTrack } from "./types";
 
 export const track = sqliteTable('track', {
 	id: integer('id').$type<TrackId>().primaryKey(),
@@ -13,6 +13,7 @@ export const track = sqliteTable('track', {
 
 	meta_isrc: text('meta_isrc').$type<Isrc>(),
 	meta_qobuz_id: integer('meta_qobuz_id').$type<QobuzId>(),
+	meta_qobuz_get_track: text('meta_qobuz_get_track', { mode: 'json' }).$type<QobuzTrack>(),
 	meta_spotify_id: text('meta_spotify_id').$type<SpotifyId>(),
 	meta_spotify_v1_get_track: text('meta_spotify_v1_get_track', { mode: 'json' }).$type<SpotifyTrack>(),
 	meta_spotify_v1_audio_features: text('meta_spotify_v1_audio_features', { mode: 'json' }).$type<SpotifyAudioFeatures>(),

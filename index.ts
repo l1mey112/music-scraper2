@@ -5,22 +5,6 @@ import { spotify_api, spotify_create, spotify_user_api, spotify_user_create, thi
 import { PassFlags, passes, passflags_string } from "./pass";
 import { qobuz_create, qobuz_keys, qobuz_token } from "./qobuz";
 
-// 252881807 (MONEY ON THE DASH - ACAPELLA)
-
-/* const url = `https://www.qobuz.com/api.json/0.2/track/get?app_id=${qobuz_keys.app_id}&track_id=252881807`
-
-const response = await fetch(url, {
-	method: 'GET',
-	headers: {
-		"X-App-Id": qobuz_keys.app_id,
-		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0",
-		"X-User-Auth-Token": qobuz_token,
-	}
-})
-
-console.log(response)
-console.log(await response.text()) */
-
 let flags = passes.reduce((acc, v) => acc | v.flags, 0)
 
 console.log(`passflags: ${passflags_string(flags)}`)
@@ -59,9 +43,8 @@ do {
 		// stats
 		// console.log(`stats: ${JSON.stringify(stats)}`)
 
-		console.log(`pass(${wave}): ${pass.name} (flags: ${passflags_string(pass.flags)})`)
-
 		if (await pass.fn()) {
+			console.log(`pass(${wave}): ${pass.name} (flags: ${passflags_string(pass.flags)})`)
 			changed = true
 		}
 	}

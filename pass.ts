@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "./db"
-import { SpotifyTrack, AlbumEntry, SpotifyAlbum, TrackId, SpotifyAudioFeatures, SpotifyId, AlbumId, ArtistId, TrackEntry, ArtistEntry, Isrc } from './types';
+import { SpotifyTrack, AlbumEntry, SpotifyAlbum, TrackId, SpotifyAudioFeatures, SpotifyId, AlbumId, ArtistId, TrackEntry, ArtistEntry, Isrc, QobuzId, QobuzTrack } from './types';
 import * as schema from './schema';
 import { spotify_api } from "./spotify";
 import { safepoint } from "./safepoint";
@@ -468,8 +468,8 @@ async function pass_track_meta_search_qobuz() {
 	const k = db.all<{ id: TrackId, isrc: Isrc, track_name: string, artist_name: string }>(sql_query)
 
 	type QobuzSearchItem = {
-		isrc: string
-		id: number
+		isrc: Isrc
+		id: QobuzId
 	}
 
 	type QobuzSearch = {
@@ -499,7 +499,7 @@ async function pass_track_meta_search_qobuz() {
 		for (const item of j.tracks.items) {
 			if (item.isrc === track.isrc) {
 				found = true
-				
+
 				db.update(schema.track)
 					.set({ meta_qobuz_id: item.id })
 					.where(sql`id = ${track.id}`)
@@ -517,11 +517,38 @@ async function pass_track_meta_search_qobuz() {
 	return k.length > 0 // mutation
 }
 
+async function pass_track_meta_qobuz_track_get() {
+	const k = db.select({ id: schema.track.id, meta_qobuz_id: schema.track.meta_qobuz_id })
+		.from(schema.track)
+		.where(sql`meta_qobuz_id is not null and meta_qobuz_get_track is null`)
+		.all()
+
+	for (const track of k) {
+		const sp = safepoint('pass.track.meta.qobuz_track_get')
+
+		const k = await qobuz_api(`track/get?track_id=${track.meta_qobuz_id!}`)
+		if (!k.ok) {
+			console.error(`pass_track_meta_qobuz: request status non 200: ${k.status} ${await k.text()}`)
+			process.exit(1)
+		}
+		const j: QobuzTrack = await k.json() as any
+
+		db.update(schema.track)
+			.set({ meta_qobuz_get_track: j })
+			.where(sql`id = ${track.id}`)
+			.run()
+
+		sp.release()
+	}
+
+	return k.length > 0 // mutation
+}
+
 // extract spotify ids, isrcs, qobuz ids, and so on
 // weak meaning no network touching
 // won't check for these things:
 // - `spotify_v1_get_track` + `spotify_v1_audio_features` implies `spotify_id`
-async function pass_track_meta_weak() {
+function pass_track_meta_weak() {
 	// isrc from spotify_v1_get_track
 
 	const k = db.select({ id: schema.track.id, meta_spotify_v1_get_track: schema.track.meta_spotify_v1_get_track })
@@ -584,6 +611,7 @@ export const passes: PassBlock[] = [
 	{ name: 'track.meta.spotify_v1_get_track', fn: pass_track_meta_spotify_v1_get_track, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_audio_features', fn: pass_track_meta_spotify_v1_audio_features, flags: PassFlags.spotify },
 	{ name: 'track.meta.search_qobuz', fn: pass_track_meta_search_qobuz, flags: PassFlags.qobuz_user },
+	{ name: 'track.meta.qobuz_track_get', fn: pass_track_meta_qobuz_track_get, flags: PassFlags.qobuz_user },
 	{ name: 'album.spotify_track_extrapolate', fn: pass_album_spotify_track_extrapolate, flags: PassFlags.spotify },
 	{ name: 'album.meta.spotify_v1_get_album', fn: pass_album_meta_spotify_v1_get_album, flags: PassFlags.spotify },
 	{ name: 'artist.spotify_track_extrapolate', fn: pass_artist_spotify_track_extrapolate, flags: PassFlags.none },
