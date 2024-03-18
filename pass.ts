@@ -6,6 +6,7 @@ import { spotify_api } from "./spotify";
 import { safepoint } from "./safepoint";
 import { qobuz_api } from "./qobuz";
 import { deezer_api_json } from "./deezer";
+import { youtube_music } from "./youtube";
 
 // register backoff for a pass if it failed and would be expensive to compute again
 
@@ -378,7 +379,7 @@ function pass_artist_spotify_track_extrapolate() {
 				.all()
 
 			let artist_id: ArtistId | undefined = k0[0]?.id
-			
+
 			if (!artist_id) {
 				// create artist
 
@@ -522,6 +523,74 @@ async function pass_track_meta_search_qobuz() {
 	return k.length > 0 // mutation
 }
 
+// search using "{title} {artist}"
+async function pass_track_meta_search_youtube_music_id() {
+	const sql_query = sql`
+	SELECT
+		t.id AS id,
+		t.name AS track_name,
+		first_artist.name AS artist_name,
+		t.meta_duration_ms AS duration_ms
+	FROM
+		track t
+	INNER JOIN (
+		SELECT ta.track_id, a.name
+		FROM track_artists ta
+		INNER JOIN artist a ON ta.artist_id = a.id
+		WHERE ta.is_first AND a.name IS NOT NULL
+	) first_artist ON t.id = first_artist.track_id
+	WHERE first_artist.name IS NOT NULL AND t.meta_duration_ms IS NOT NULL AND t.meta_youtube_music_id IS NULL
+		AND t.id NOT IN (
+			SELECT track_id
+			FROM pass_backoff
+			WHERE pass = 'track.meta.search_youtube_music_id'
+			AND utc > ${retry_cutoff}
+		);`
+
+	const k = db.all<{ id: TrackId, track_name: string, artist_name: string, duration_ms: number }>(sql_query)
+
+	// two lines of defense
+	// 1. searching specifically for songs
+	// 2. duration_ms match
+
+	let updated = 0
+
+	// TODO: add in `safepoint` support with `run_with_concurrency_limit`
+	// TODO: this is impl now because i don't have a lot of time
+
+	run_with_concurrency_limit(k, 30, async (track) => {
+		const search = `${track.track_name} ${track.artist_name}`
+
+		let found = false
+
+		// find best match using duration_ms
+		const k = await youtube_music.searchSongs(search)
+		for (const yt_track of k) {
+			if (!yt_track.duration) {
+				continue
+			}
+			const diff = Math.abs(yt_track.duration * 1000 - track.duration_ms)
+
+			if (diff <= 1000) {
+				console.log(`pass_track_meta_youtube_music_id: found match for track ${track.track_name} (id: ${track.id}) with video id ${yt_track.videoId} (${search})`)
+				db.update(schema.track)
+					.set({ meta_youtube_music_id: yt_track.videoId })
+					.where(sql`id = ${track.id}`)
+					.run()
+				updated++
+				found = true
+				break
+			}
+		}
+
+		if (!found) {
+			register_backoff_track(track.id, 'track.meta.search_youtube_music_id')
+		}
+	})
+
+	return updated > 0 // no mutation
+}
+
 async function pass_track_meta_qobuz_track_get() {
 	const k = db.select({ id: schema.track.id, meta_qobuz_id: schema.track.meta_qobuz_id })
 		.from(schema.track)
@@ -567,8 +636,6 @@ async function pass_track_meta_isrc_deezer() {
 		const j: DeezerTrack | undefined = await deezer_api_json(`track/isrc:${track.meta_isrc!}`)
 
 		if (j) {
-			console.log(`pass_track_meta_isrc_deezer: found deezer track ${j.id} for isrc ${track.meta_isrc}`)
-
 			db.update(schema.track)
 				.set({ meta_deezer_id: j.id, meta_deezer_get_track: j })
 				.where(sql`id = ${track.id}`)
@@ -583,19 +650,22 @@ async function pass_track_meta_isrc_deezer() {
 	return k.length > 0 // mutation
 }
 
-// extract spotify ids, isrcs, qobuz ids, and so on
+// extract spotify ids, isrcs, qobuz ids, duration_ms, and so on
 // weak meaning no network touching
 // won't check for these things:
 // - `spotify_v1_get_track` + `spotify_v1_audio_features` implies `spotify_id`
 function pass_track_meta_weak() {
 	// isrc from spotify_v1_get_track
 
-	const k = db.select({ id: schema.track.id, meta_spotify_v1_get_track: schema.track.meta_spotify_v1_get_track })
+	const k0 = db.select({ id: schema.track.id, meta_spotify_v1_get_track: schema.track.meta_spotify_v1_get_track })
 		.from(schema.track)
-		.where(sql`meta_spotify_v1_get_track is not null and meta_isrc is null`)
+		.where(sql`(meta_spotify_v1_get_track is not null) and (meta_isrc is null)`)
 		.all()
-	
-	for (const track of k) {
+
+	let k0length = k0.length
+
+	// TODO: just fucking forget tracks from spotify without an isrc
+	for (const track of k0) {
 		const isrc = track.meta_spotify_v1_get_track!.external_ids?.isrc
 		if (isrc) {
 			db.update(schema.track)
@@ -607,10 +677,28 @@ function pass_track_meta_weak() {
 			// if it keeps happening insert a backoff
 			// though if we were to insert a backoff having a more fine grained pass would be much better
 			console.error(`pass_track_meta_weak: warn track ${track.id} has no ISRC`)
+			k0length--
 		}
 	}
 
-	return k.length > 0 // mutation
+	// TODO: extract duration_ms from qobuz and deezer, now it only does spotify
+	//       perform second query here when i get to it
+	// TODO: return 3 different types of metadata and pick the most accurate one (at least one non null)
+
+	const k1 = db.select({ id: schema.track.id, meta_spotify_v1_get_track: schema.track.meta_spotify_v1_get_track })
+		.from(schema.track)
+		.where(sql`(meta_spotify_v1_get_track is not null) and (meta_duration_ms is null)`)
+		.all()
+
+	for (const track of k1) {
+		const duration_ms = track.meta_spotify_v1_get_track!.duration_ms
+		db.update(schema.track)
+			.set({ meta_duration_ms: duration_ms })
+			.where(sql`id = ${track.id}`)
+			.run()
+	}
+
+	return k0length > 0 || k1.length > 0 // mutation
 }
 
 export enum PassFlags {
@@ -619,6 +707,7 @@ export enum PassFlags {
 	spotify_user = 1 << 1,
 	qobuz_user = 1 << 2,
 	deezer_arl = 1 << 3,
+	youtube_music = 1 << 4,
 }
 
 export function passflags_string(flags: number & PassFlags) {
@@ -649,10 +738,11 @@ export const passes: PassBlock[] = [
 	// { name: 'track.meta.search_ident', fn: pass_track_meta_search_ident, flags: PassFlags.spotify },
 	{ name: 'track.spotify_album_extrapolate', fn: pass_track_spotify_album_extrapolate, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_get_track', fn: pass_track_meta_spotify_v1_get_track, flags: PassFlags.spotify },
-	{ name: 'track.meta.spotify_v1_audio_features', fn: pass_track_meta_spotify_v1_audio_features, flags: PassFlags.spotify },
-	{ name: 'track.meta.search_qobuz', fn: pass_track_meta_search_qobuz, flags: PassFlags.qobuz_user },
-	{ name: 'track.meta.isrc_deezer', fn: pass_track_meta_isrc_deezer, flags: PassFlags.deezer_arl },
-	{ name: 'track.meta.qobuz_track_get', fn: pass_track_meta_qobuz_track_get, flags: PassFlags.qobuz_user },
+	//{ name: 'track.meta.spotify_v1_audio_features', fn: pass_track_meta_spotify_v1_audio_features, flags: PassFlags.spotify },
+	//{ name: 'track.meta.search_qobuz', fn: pass_track_meta_search_qobuz, flags: PassFlags.qobuz_user },
+	//{ name: 'track.meta.isrc_deezer', fn: pass_track_meta_isrc_deezer, flags: PassFlags.deezer_arl },
+	//{ name: 'track.meta.qobuz_track_get', fn: pass_track_meta_qobuz_track_get, flags: PassFlags.qobuz_user },
+	{ name: 'track.meta.search_youtube_music_id', fn: pass_track_meta_search_youtube_music_id, flags: PassFlags.youtube_music },
 	{ name: 'album.spotify_track_extrapolate', fn: pass_album_spotify_track_extrapolate, flags: PassFlags.spotify },
 	{ name: 'album.meta.spotify_v1_get_album', fn: pass_album_meta_spotify_v1_get_album, flags: PassFlags.spotify },
 	{ name: 'artist.spotify_track_extrapolate', fn: pass_artist_spotify_track_extrapolate, flags: PassFlags.none },

@@ -144,6 +144,9 @@ export async function thirdparty_spotify_index_liked() {
 	// TODO: currently scrapes to 50 incrementsm my 7235 songs go to 7250
 	//       how does that even happen? what data is the extra songs?
 
+	// TODO: when cancelled halfway through, it won't start back where it started
+	//       probably because it goes from top (1) to bottom instead of bottom to up as it was originally
+
 	const db_count_q = db.select({ count: sql<number>`count(*)` })
 		.from(schema.thirdparty_spotify_saved_tracks)
 		.where(sql`spotify_user_id = ${spotify_user.id}`)

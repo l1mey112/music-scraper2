@@ -5,6 +5,7 @@ import { spotify_api, spotify_create, spotify_user_api, spotify_user_create, thi
 import { PassFlags, passes, passflags_string } from "./pass";
 import { qobuz_create, qobuz_keys, qobuz_token } from "./qobuz";
 import { deezer_api_json, deezer_create } from "./deezer";
+import { youtube_music, youtube_music_create } from "./youtube";
 
 let flags = passes.reduce((acc, v) => acc | v.flags, 0)
 
@@ -13,6 +14,8 @@ console.log(`passflags: ${passflags_string(flags)}`)
 if (false) {
 	await spotify_user_create()
 	await thirdparty_spotify_index_liked()
+	console.log('done')
+	process.exit(0)
 }
 
 if (flags & PassFlags.spotify) {
@@ -31,6 +34,11 @@ if (flags & PassFlags.qobuz_user) {
 if (flags & PassFlags.deezer_arl) {
 	await deezer_create()
 	flags &= ~PassFlags.deezer_arl
+}
+
+if (flags & PassFlags.youtube_music) {
+	await youtube_music_create()
+	flags &= ~PassFlags.youtube_music
 }
 
 if (flags) {
