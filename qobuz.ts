@@ -72,7 +72,6 @@ async function get_secrets_and_app_id(): Promise<[string, string[]]> {
 	return [app_id, secrets_list]
 }
 
-
 async function get_app_id_and_secrets(): Promise<QobuzKeys> {
 	console.log(`qobuz: getting secrets and app id`)
 

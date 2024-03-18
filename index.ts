@@ -4,6 +4,7 @@ import * as schema from "./schema";
 import { spotify_api, spotify_create, spotify_user_api, spotify_user_create, thirdparty_spotify_index_liked } from "./spotify";
 import { PassFlags, passes, passflags_string } from "./pass";
 import { qobuz_create, qobuz_keys, qobuz_token } from "./qobuz";
+import { deezer_api_json, deezer_create } from "./deezer";
 
 let flags = passes.reduce((acc, v) => acc | v.flags, 0)
 
@@ -14,7 +15,6 @@ if (false) {
 	await thirdparty_spotify_index_liked()
 }
 
-// TODO: add a readonly and readwrite db connection flag
 if (flags & PassFlags.spotify) {
 	// TODO: possibly create a flag for `spotify_user` to perform user actions
 	//       honestly i should create a direct logged in user and non logged in user
@@ -26,6 +26,11 @@ if (flags & PassFlags.spotify) {
 if (flags & PassFlags.qobuz_user) {
 	await qobuz_create()
 	flags &= ~PassFlags.qobuz_user
+}
+
+if (flags & PassFlags.deezer_arl) {
+	await deezer_create()
+	flags &= ~PassFlags.deezer_arl
 }
 
 if (flags) {

@@ -1,10 +1,11 @@
 import { sql } from "drizzle-orm";
 import { db } from "./db"
-import { SpotifyTrack, AlbumEntry, SpotifyAlbum, TrackId, SpotifyAudioFeatures, SpotifyId, AlbumId, ArtistId, TrackEntry, ArtistEntry, Isrc, QobuzId, QobuzTrack } from './types';
+import { SpotifyTrack, AlbumEntry, SpotifyAlbum, TrackId, SpotifyAudioFeatures, SpotifyId, AlbumId, ArtistId, TrackEntry, ArtistEntry, Isrc, QobuzId, QobuzTrack, DeezerTrack } from './types';
 import * as schema from './schema';
 import { spotify_api } from "./spotify";
 import { safepoint } from "./safepoint";
 import { qobuz_api } from "./qobuz";
+import { deezer_api_json } from "./deezer";
 
 // register backoff for a pass if it failed and would be expensive to compute again
 
@@ -21,12 +22,16 @@ function register_backoff_track(id: TrackId, pass_name: string) {
 }
 
 function register_backoff_album(id: AlbumId, pass_name: string) {
+	console.log(`register_backoff_album: registering backoff for album ${id} for pass ${pass_name}`)
+
 	db.insert(schema.pass_backoff)
 		.values({ album_id: id, utc: Date.now(), pass: pass_name })
 		.run()
 }
 
 function register_backoff_artist(id: ArtistId, pass_name: string) {
+	console.log(`register_backoff_artist: registering backoff for artist ${id} for pass ${pass_name}`)
+
 	db.insert(schema.pass_backoff)
 		.values({ artist_id: id, utc: Date.now(), pass: pass_name })
 		.run()
@@ -544,6 +549,40 @@ async function pass_track_meta_qobuz_track_get() {
 	return k.length > 0 // mutation
 }
 
+// from isrc -> deezer_id + deezer_get_track
+// deezer_id implies deezer_get_track
+async function pass_track_meta_isrc_deezer() {
+	const k = db.select({ id: schema.track.id, meta_isrc: schema.track.meta_isrc })
+		.from(schema.track)
+		.where(sql`meta_isrc is not null and meta_deezer_id is null and id not in (
+			select track_id from pass_backoff where pass = 'track.meta.isrc_deezer'
+			and utc > ${retry_cutoff}
+		)`)
+		.all()
+
+	for (const track of k) {
+		const sp = safepoint('pass.track.meta.isrc_deezer')
+
+		// if this fails it'll return error code 800 meaning no data
+		const j: DeezerTrack | undefined = await deezer_api_json(`track/isrc:${track.meta_isrc!}`)
+
+		if (j) {
+			console.log(`pass_track_meta_isrc_deezer: found deezer track ${j.id} for isrc ${track.meta_isrc}`)
+
+			db.update(schema.track)
+				.set({ meta_deezer_id: j.id, meta_deezer_get_track: j })
+				.where(sql`id = ${track.id}`)
+				.run()
+		} else {
+			register_backoff_track(track.id, 'track.meta.isrc_deezer')
+		}
+
+		sp.release()
+	}
+
+	return k.length > 0 // mutation
+}
+
 // extract spotify ids, isrcs, qobuz ids, and so on
 // weak meaning no network touching
 // won't check for these things:
@@ -579,6 +618,7 @@ export enum PassFlags {
 	spotify = 1 << 0,
 	spotify_user = 1 << 1,
 	qobuz_user = 1 << 2,
+	deezer_arl = 1 << 3,
 }
 
 export function passflags_string(flags: number & PassFlags) {
@@ -611,6 +651,7 @@ export const passes: PassBlock[] = [
 	{ name: 'track.meta.spotify_v1_get_track', fn: pass_track_meta_spotify_v1_get_track, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_audio_features', fn: pass_track_meta_spotify_v1_audio_features, flags: PassFlags.spotify },
 	{ name: 'track.meta.search_qobuz', fn: pass_track_meta_search_qobuz, flags: PassFlags.qobuz_user },
+	{ name: 'track.meta.isrc_deezer', fn: pass_track_meta_isrc_deezer, flags: PassFlags.deezer_arl },
 	{ name: 'track.meta.qobuz_track_get', fn: pass_track_meta_qobuz_track_get, flags: PassFlags.qobuz_user },
 	{ name: 'album.spotify_track_extrapolate', fn: pass_album_spotify_track_extrapolate, flags: PassFlags.spotify },
 	{ name: 'album.meta.spotify_v1_get_album', fn: pass_album_meta_spotify_v1_get_album, flags: PassFlags.spotify },
