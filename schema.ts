@@ -1,7 +1,5 @@
 import { sqliteTable, integer, text, unique } from "drizzle-orm/sqlite-core";
-
-
-import { Locale, TrackId, AlbumId, ArtistId, SpotifyTrack, Isrc, SpotifyId, SpotifyAudioFeatures, SpotifyAlbum } from "./types";
+import { Locale, TrackId, AlbumId, ArtistId, SpotifyTrack, Isrc, SpotifyId, SpotifyAudioFeatures, SpotifyAlbum, SpotifyArtist, QobuzId } from "./types";
 
 export const track = sqliteTable('track', {
 	id: integer('id').$type<TrackId>().primaryKey(),
@@ -9,17 +7,12 @@ export const track = sqliteTable('track', {
 	name: text('name').notNull(),
 	// locale: text('locale', { mode: 'json' }).$type<Locale>(),
 
-	// need joining table for efficiency
-	// also apply their purpose in creation of the track too
-	// TODO: scrape spotify song credits to use this
-	/* artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
-	artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), */ // ArtistId[]
-
 	album_id: integer('album_id').$type<AlbumId>(), // check null first to use `track_number` and `disc_number`
 	album_track_number: integer('album_track_number').$default(() => 0).notNull(), // 1 index based
 	album_disc_number: integer('album_disc_number').$default(() => 0).notNull(), // 1 index based
 
 	meta_isrc: text('meta_isrc').$type<Isrc>(),
+	meta_qobuz_id: integer('meta_qobuz_id').$type<QobuzId>(),
 	meta_spotify_id: text('meta_spotify_id').$type<SpotifyId>(),
 	meta_spotify_v1_get_track: text('meta_spotify_v1_get_track', { mode: 'json' }).$type<SpotifyTrack>(),
 	meta_spotify_v1_audio_features: text('meta_spotify_v1_audio_features', { mode: 'json' }).$type<SpotifyAudioFeatures>(),
@@ -31,12 +24,8 @@ export const album = sqliteTable('album', {
 	name: text('name').notNull(),
 	// locale: text('locale', { mode: 'json' }).$type<Locale>(),
 
-	// null means unknown
+	// find artist of album, select first track then first artist (eariest order in joining table)
 	total_tracks: integer('total_tracks'),
-	
-	// TODO: possibly ignore and create this on the fly using tracks inside?
-	// artist_primary_id: integer('artist_primary_id').$type<ArtistId>(),
-	// artist_ids: text('artists', { mode: 'json' }).$type<ArtistId[]>(), // ArtistId[]
 
 	meta_isrc: text('meta_isrc').$type<Isrc>(),
 	meta_spotify_id: text('meta_spotify_id').$type<SpotifyId>(),
@@ -45,11 +34,23 @@ export const album = sqliteTable('album', {
 
 export const artist = sqliteTable('artist', {
 	id: integer('id').$type<ArtistId>().primaryKey(),
+
+	name: text('name').notNull(),
+
+	meta_spotify_id: text('meta_spotify_id').$type<SpotifyId>(),
+	meta_spotify_v1_get_artist: text('meta_spotify_v1_get_artist', { mode: 'json' }).$type<SpotifyArtist>(),
 })
+
+export const track_artists = sqliteTable('track_artists', {
+	track_id: integer('track_id').references(() => track.id),
+	artist_id: integer('artist_id').references(() => artist.id),
+	is_first: integer('is_first', { mode: "boolean" }).notNull(),
+}, (t) => ({
+	unq: unique().on(t.track_id, t.artist_id),
+}))
 
 // pass backoff for metadata
 export const pass_backoff = sqliteTable('pass_backoff', {
-	id: integer('id').primaryKey(),
 	utc: integer('utc').notNull(),
 
 	// one of these should be not null
@@ -104,3 +105,9 @@ export const thirdparty_spotify_saved_tracks = sqliteTable('thirdparty:spotify_s
 	// a user can save multiple of the same underlying track at different times
 	unq: unique().on(t.spotify_user_id, t.track_id, t.save_utc),
 }))
+
+// persistent store
+export const thirdparty_store = sqliteTable('thirdparty:store', {
+	kind: text('kind').notNull(),
+	data: text('data', { mode: 'json' }).notNull(),
+})

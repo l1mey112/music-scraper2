@@ -2,7 +2,7 @@ import * as schema from "./schema"
 
 // stop polluting my namespace (it's not possible to import * as ...)
 // spotify v1 api
-import { Album, AudioFeatures, SimplifiedTrack, Track } from "@spotify/web-api-ts-sdk"
+import { Album, Artist, AudioFeatures, SimplifiedTrack, Track } from "@spotify/web-api-ts-sdk"
 
 // {"name": "cosMo@Bousou-P"}
 // {"name": "cosMo@Bousou-P", "locale": "en-US"}
@@ -23,5 +23,7 @@ export type SpotifyTrack = Track
 export type SpotifyAudioFeatures = AudioFeatures
 export type SpotifyAlbum = Omit<Album, 'tracks'> // trim the fat
 export type SpotifyAlbumTrack = SimplifiedTrack[] // pagination unwrapped
+export type SpotifyArtist = Artist
 export type SpotifyId = string
+export type QobuzId = number
 export type Isrc = string
