@@ -20,5 +20,6 @@ process.on("beforeExit", (code) => {
 	sqlite.exec("pragma journal_mode = DELETE;") // delete wal
 	sqlite.exec("pragma vacuum;") // vacuum
 	sqlite.exec("pragma optimize;") // optimize
+	sqlite.exec("pragma analysis_limit=1000;") // 1000 iterations
 	sqlite.close() // close the db
 })

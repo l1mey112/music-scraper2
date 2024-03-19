@@ -7,16 +7,16 @@ import { qobuz_create, qobuz_keys, qobuz_token } from "./qobuz";
 import { deezer_api_json, deezer_create } from "./deezer";
 import { youtube_music, youtube_music_create } from "./youtube";
 
-let flags = passes.reduce((acc, v) => acc | v.flags, 0)
-
-console.log(`passflags: ${passflags_string(flags)}`)
-
 if (false) {
 	await spotify_user_create()
 	await thirdparty_spotify_index_liked()
 	console.log('done')
 	process.exit(0)
 }
+
+let flags = passes.reduce((acc, v) => acc | v.flags, 0)
+
+console.log(`passflags: ${passflags_string(flags)}`)
 
 if (flags & PassFlags.spotify) {
 	// TODO: possibly create a flag for `spotify_user` to perform user actions

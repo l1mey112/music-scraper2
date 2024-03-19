@@ -12,6 +12,7 @@
   "dependencies": {
     "@spotify/web-api-ts-sdk": "^1.2.0",
     "drizzle-orm": "^0.30.0",
+    "ytdl-core": "^4.11.5",
     "ytmusic-api": "^5.2.1"
   }
 }

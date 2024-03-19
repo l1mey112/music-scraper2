@@ -173,6 +173,8 @@ export async function thirdparty_spotify_index_liked() {
 				continue
 			}
 
+			console.log(`spotify: indexing track ${track.name}, id: ${track.id}`)
+
 			const spotify_id = track.id
 			const isrc = track.external_ids?.isrc ? track.external_ids?.isrc : null
 

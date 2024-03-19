@@ -7,7 +7,7 @@ export const track = sqliteTable('track', {
 	name: text('name').notNull(),
 	// locale: text('locale', { mode: 'json' }).$type<Locale>(),
 
-	album_id: integer('album_id').$type<AlbumId>(), // check null first to use `track_number` and `disc_number`
+	album_id: integer('album_id').references(() => album.id).$type<AlbumId>(), // check null first to use `track_number` and `disc_number`
 	album_track_number: integer('album_track_number').$default(() => 0).notNull(), // 1 index based
 	album_disc_number: integer('album_disc_number').$default(() => 0).notNull(), // 1 index based
 
@@ -47,8 +47,8 @@ export const artist = sqliteTable('artist', {
 })
 
 export const track_artists = sqliteTable('track_artists', {
-	track_id: integer('track_id').references(() => track.id),
-	artist_id: integer('artist_id').references(() => artist.id),
+	track_id: integer('track_id').references(() => track.id).$type<TrackId>(),
+	artist_id: integer('artist_id').references(() => artist.id).$type<ArtistId>(),
 	is_first: integer('is_first', { mode: "boolean" }).notNull(),
 }, (t) => ({
 	unq: unique().on(t.track_id, t.artist_id),

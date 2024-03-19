@@ -11,11 +11,10 @@ if (!deezer_arl) {
 // class API
 // will return undefined on status 800 no data
 export async function deezer_api_json(method: string): Promise<any | undefined> {
-	// TODO:
 	const k = await fetch(`https://api.deezer.com/${method}`, {
 		method: "GET",
 		headers: {
-			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0",
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:64.0) Gecko/20100101 Firefox/64.0",
 			"Cookie": `arl=${deezer_arl}; Domain=.deezer.com; Path=/; HttpOnly`
 		},
 	})

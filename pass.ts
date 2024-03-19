@@ -92,14 +92,12 @@ async function pass_track_meta_spotify_v1_audio_features() {
 		for (const feature of features) {
 			if (!feature) {
 				register_backoff_track(batch[feature_idx].id, 'track.meta.spotify_v1_audio_features')
-				continue
+			} else {
+				db.update(schema.track)
+					.set({ meta_spotify_v1_audio_features: feature })
+					.where(sql`meta_spotify_id = ${feature.id}`)
+					.run()	
 			}
-
-			db.update(schema.track)
-				.set({ meta_spotify_v1_audio_features: feature })
-				.where(sql`meta_spotify_id = ${feature.id}`)
-				.run()
-			
 			feature_idx++
 		}
 
@@ -485,16 +483,15 @@ async function pass_track_meta_search_qobuz() {
 		}
 	}
 
-	for (const track of k) {
-		const sp = safepoint('pass.track.meta.search_qobuz')
-
+	let updated = 0
+	await run_with_concurrency_limit(k, 30, async function (track) {
 		const search = `${track.track_name} ${track.artist_name}`
 
 		// default limit is 50
 		// if we don't find what we're looking for within 50 tracks, then we're not going to find it
 		const k = await qobuz_api(`track/search?query=${encodeURIComponent(search)}`)
 		if (!k.ok) {
-			console.error(`pass_track_meta_qobuz: request status non 200: ${k.status} ${await k.text()}`)
+			console.error(`pass_track_meta_search_qobuz: request status non 200: ${k.status} ${await k.text()}`)
 			process.exit(1)
 		}
 		const j: QobuzSearch = await k.json() as any
@@ -505,6 +502,7 @@ async function pass_track_meta_search_qobuz() {
 		for (const item of j.tracks.items) {
 			if (item.isrc === track.isrc) {
 				found = true
+				updated++
 
 				db.update(schema.track)
 					.set({ meta_qobuz_id: item.id })
@@ -517,10 +515,9 @@ async function pass_track_meta_search_qobuz() {
 		if (!found) {
 			register_backoff_track(track.id, 'track.meta.search_qobuz')
 		}
-		sp.release()
-	}
+	})
 
-	return k.length > 0 // mutation
+	return updated > 0 // mutation
 }
 
 // search using "{title} {artist}"
@@ -558,7 +555,7 @@ async function pass_track_meta_search_youtube_music_id() {
 	// TODO: add in `safepoint` support with `run_with_concurrency_limit`
 	// TODO: this is impl now because i don't have a lot of time
 
-	run_with_concurrency_limit(k, 30, async (track) => {
+	await run_with_concurrency_limit(k, 30, async (track) => {
 		const search = `${track.track_name} ${track.artist_name}`
 
 		let found = false
@@ -597,25 +594,24 @@ async function pass_track_meta_qobuz_track_get() {
 		.where(sql`meta_qobuz_id is not null and meta_qobuz_get_track is null`)
 		.all()
 
-	for (const track of k) {
-		const sp = safepoint('pass.track.meta.qobuz_track_get')
-
+	let updated = 0
+	await run_with_concurrency_limit(k, 30, async function (track) {
+		console.log(`pass_track_meta_qobuz_track_get: getting track ${track.meta_qobuz_id}`)
 		const k = await qobuz_api(`track/get?track_id=${track.meta_qobuz_id!}`)
 		if (!k.ok) {
-			console.error(`pass_track_meta_qobuz: request status non 200: ${k.status} ${await k.text()}`)
-			process.exit(1)
+			console.error(`pass_track_meta_qobuz_track_get: request (qobuz_id: ${track.meta_qobuz_id!}) status non 200: ${k.status} ${await k.text()}`)
+		} else {
+			const j: QobuzTrack = await k.json() as any
+
+			db.update(schema.track)
+				.set({ meta_qobuz_get_track: j })
+				.where(sql`id = ${track.id}`)
+				.run()
+			updated++
 		}
-		const j: QobuzTrack = await k.json() as any
+	})
 
-		db.update(schema.track)
-			.set({ meta_qobuz_get_track: j })
-			.where(sql`id = ${track.id}`)
-			.run()
-
-		sp.release()
-	}
-
-	return k.length > 0 // mutation
+	return updated > 0 // mutation
 }
 
 // from isrc -> deezer_id + deezer_get_track
@@ -629,9 +625,16 @@ async function pass_track_meta_isrc_deezer() {
 		)`)
 		.all()
 
-	for (const track of k) {
-		const sp = safepoint('pass.track.meta.isrc_deezer')
+	let updated = 0
+	await run_with_concurrency_limit(k, 30, async function (track) {
+		// this causes a 504 Gateway Time-out ???
+		if (track.meta_isrc! == 'TCAEA1802695') {
+			console.error('pass_track_meta_isrc_deezer: skipping track with isrc TCAEA1802695')
+			return
+		}
 
+		console.log(`pass_track_meta_isrc_deezer: getting track ${track.meta_isrc}`)
+		
 		// if this fails it'll return error code 800 meaning no data
 		const j: DeezerTrack | undefined = await deezer_api_json(`track/isrc:${track.meta_isrc!}`)
 
@@ -640,14 +643,13 @@ async function pass_track_meta_isrc_deezer() {
 				.set({ meta_deezer_id: j.id, meta_deezer_get_track: j })
 				.where(sql`id = ${track.id}`)
 				.run()
+			updated++
 		} else {
 			register_backoff_track(track.id, 'track.meta.isrc_deezer')
 		}
+	})
 
-		sp.release()
-	}
-
-	return k.length > 0 // mutation
+	return updated > 0 // mutation
 }
 
 // extract spotify ids, isrcs, qobuz ids, duration_ms, and so on
@@ -735,13 +737,12 @@ export type PassBlock = {
 // don't you just love phase ordering?
 export const passes: PassBlock[] = [
 	{ name: 'track.meta.weak', fn: pass_track_meta_weak, flags: PassFlags.none },
-	// { name: 'track.meta.search_ident', fn: pass_track_meta_search_ident, flags: PassFlags.spotify },
 	{ name: 'track.spotify_album_extrapolate', fn: pass_track_spotify_album_extrapolate, flags: PassFlags.spotify },
 	{ name: 'track.meta.spotify_v1_get_track', fn: pass_track_meta_spotify_v1_get_track, flags: PassFlags.spotify },
-	//{ name: 'track.meta.spotify_v1_audio_features', fn: pass_track_meta_spotify_v1_audio_features, flags: PassFlags.spotify },
-	//{ name: 'track.meta.search_qobuz', fn: pass_track_meta_search_qobuz, flags: PassFlags.qobuz_user },
-	//{ name: 'track.meta.isrc_deezer', fn: pass_track_meta_isrc_deezer, flags: PassFlags.deezer_arl },
-	//{ name: 'track.meta.qobuz_track_get', fn: pass_track_meta_qobuz_track_get, flags: PassFlags.qobuz_user },
+	{ name: 'track.meta.spotify_v1_audio_features', fn: pass_track_meta_spotify_v1_audio_features, flags: PassFlags.spotify },
+	{ name: 'track.meta.search_qobuz', fn: pass_track_meta_search_qobuz, flags: PassFlags.qobuz_user },
+	{ name: 'track.meta.isrc_deezer', fn: pass_track_meta_isrc_deezer, flags: PassFlags.deezer_arl },
+	{ name: 'track.meta.qobuz_track_get', fn: pass_track_meta_qobuz_track_get, flags: PassFlags.qobuz_user },
 	{ name: 'track.meta.search_youtube_music_id', fn: pass_track_meta_search_youtube_music_id, flags: PassFlags.youtube_music },
 	{ name: 'album.spotify_track_extrapolate', fn: pass_album_spotify_track_extrapolate, flags: PassFlags.spotify },
 	{ name: 'album.meta.spotify_v1_get_album', fn: pass_album_meta_spotify_v1_get_album, flags: PassFlags.spotify },
