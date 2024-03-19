@@ -2,7 +2,9 @@ import { sql } from "drizzle-orm";
 import { db } from "./db";
 import * as schema from "./schema";
 import { spotify_api, spotify_create, spotify_user_api, spotify_user_create, thirdparty_spotify_index_liked } from "./spotify";
-import { PassFlags, passes, passflags_string } from "./pass";
+import { meta_passes } from "./meta_passes";
+import { passflags_string } from "./pass";
+import { PassFlags } from "./pass";
 import { qobuz_create, qobuz_keys, qobuz_token } from "./qobuz";
 import { deezer_api_json, deezer_create } from "./deezer";
 import { youtube_music, youtube_music_create } from "./youtube";
@@ -14,7 +16,7 @@ if (false) {
 	process.exit(0)
 }
 
-let flags = passes.reduce((acc, v) => acc | v.flags, 0)
+let flags = meta_passes.reduce((acc, v) => acc | v.flags, 0)
 
 console.log(`passflags: ${passflags_string(flags)}`)
 
@@ -52,7 +54,7 @@ let wave = 0
 do {
 	changed = false
 
-	for (const pass of passes) {
+	for (const pass of meta_passes) {
 		// stats
 		// console.log(`stats: ${JSON.stringify(stats)}`)
 
