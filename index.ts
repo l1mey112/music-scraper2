@@ -8,6 +8,7 @@ import { PassFlags } from "./pass";
 import { qobuz_create, qobuz_keys, qobuz_token } from "./qobuz";
 import { deezer_api_json, deezer_create } from "./deezer";
 import { youtube_music, youtube_music_create } from "./youtube";
+import { media_passes } from "./media_passes";
 
 if (false) {
 	await spotify_user_create()
@@ -49,8 +50,9 @@ if (flags) {
 }
 
 let changed
-let wave = 0
+let wave
 
+/* wave = 0
 do {
 	changed = false
 
@@ -58,6 +60,20 @@ do {
 		// stats
 		// console.log(`stats: ${JSON.stringify(stats)}`)
 
+		if (await pass.fn()) {
+			console.log(`pass(${wave}): ${pass.name} (flags: ${passflags_string(pass.flags)})`)
+			changed = true
+		}
+	}
+
+	wave++
+} while (changed) */
+
+wave = 0
+do {
+	changed = false
+
+	for (const pass of media_passes) {
 		if (await pass.fn()) {
 			console.log(`pass(${wave}): ${pass.name} (flags: ${passflags_string(pass.flags)})`)
 			changed = true

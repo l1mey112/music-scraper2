@@ -43,7 +43,7 @@ export enum PassFlags {
 
 export type PassBlock = {
 	name: string;
-	fn: () => boolean | Promise<boolean>;
+	fn: () => boolean | Promise<boolean | void> | void;
 	flags: number & PassFlags;
 }
 

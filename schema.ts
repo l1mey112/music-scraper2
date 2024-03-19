@@ -1,5 +1,5 @@
 import { sqliteTable, integer, text, unique } from "drizzle-orm/sqlite-core";
-import { Locale, TrackId, AlbumId, ArtistId, SpotifyTrack, Isrc, SpotifyId, SpotifyAudioFeatures, SpotifyAlbum, SpotifyArtist, QobuzId, QobuzTrack, DeezerId, DeezerTrack, YoutubeId } from "./types";
+import { Locale, TrackId, AlbumId, ArtistId, SpotifyTrack, Isrc, SpotifyId, SpotifyAudioFeatures, SpotifyAlbum, SpotifyArtist, QobuzId, QobuzTrack, DeezerId, DeezerTrack, YoutubeId, MediaKind } from "./types";
 
 export const track = sqliteTable('track', {
 	id: integer('id').$type<TrackId>().primaryKey(),
@@ -64,6 +64,30 @@ export const pass_backoff = sqliteTable('pass_backoff', {
 	artist_id: integer('artist_id').references(() => artist.id),
 
 	pass: text('pass').notNull(),
+})
+
+
+// TODO: create custom mimetypes for media?
+// application/vnd.musicscraper2.<whatever we want>
+
+
+
+// media on disk
+export const media_fs = sqliteTable('media_fs', {
+	// db    | uJMnZPHUkDtuz6KYOPHDS.jpg
+	// hash  | uJMnZPHUkDtuz6KYOPHDS
+	// shard | uJ
+	// path  | uJ / MnZPHUkDtuz6KYOPHDS.jpg
+
+	// hash with file extension
+	hash: text('hash').primaryKey(),
+
+	// one of these should be not null
+	track_id: integer('track_id').references(() => track.id),
+	album_id: integer('album_id').references(() => album.id),
+	artist_id: integer('artist_id').references(() => artist.id),
+
+	kind: text('kind').$type<MediaKind>().notNull(),
 })
 
 // TODO: user defined metadata using a type, which is the closest ground truth
