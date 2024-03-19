@@ -6,11 +6,18 @@ import { meta_passes } from "./meta_passes";
 import { passflags_string } from "./pass";
 import { PassFlags } from "./pass";
 import { qobuz_create, qobuz_keys, qobuz_token } from "./qobuz";
-import { deezer_api_json, deezer_create } from "./deezer";
+import { deezer_api_json, deezer_create, deezer_downloadable_q2 } from "./deezer";
 import { youtube_music, youtube_music_create } from "./youtube";
 import { media_passes } from "./media_passes";
 
-if (false) {
+await deezer_create()
+
+const f = Bun.file("testout")
+const k = await deezer_downloadable_q2(1690633187, f)
+
+console.log(k)
+
+/* if (false) {
 	await spotify_user_create()
 	await thirdparty_spotify_index_liked()
 	console.log('done')
@@ -50,7 +57,7 @@ if (flags) {
 }
 
 let changed
-let wave
+let wave */
 
 /* wave = 0
 do {
@@ -69,7 +76,7 @@ do {
 	wave++
 } while (changed) */
 
-wave = 0
+/* wave = 0
 do {
 	changed = false
 
@@ -81,4 +88,4 @@ do {
 	}
 
 	wave++
-} while (changed)
+} while (changed) */
