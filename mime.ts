@@ -3,7 +3,13 @@ export function mime_ext(mime: string | null | undefined) {
 		return '.bin'
 	}
 
-	return mime_ext_table[mime] || '.bin'
+	// trim ;
+	const semicolon = mime.indexOf(';')
+	if (semicolon !== -1) {
+		mime = mime.substring(0, semicolon)
+	}
+
+	return mime_ext_table[mime] ?? '.bin'
 }
 
 // TODO: only need a small subset of these, this is way too much
@@ -73,6 +79,7 @@ const mime_ext_table: Record<string, string> = Object.freeze({
 	'text/x-setext': '.etx',
 	'application/envoy': '.evy',
 	'image/fif': '.fif',
+	'audio/webm': '.webm',
 	'audio/flac': '.flac',
 	'video/fli': '.fli',
 	'video/x-fli': '.fli',

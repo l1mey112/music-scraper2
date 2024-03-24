@@ -38,7 +38,8 @@ export enum PassFlags {
 	spotify_user = 1 << 1,
 	qobuz_user = 1 << 2,
 	deezer_arl = 1 << 3,
-	youtube_music = 1 << 4
+	youtube_music = 1 << 4,
+	youtube_dl = 1 << 5,
 }
 
 export type PassBlock = {

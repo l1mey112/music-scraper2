@@ -15,7 +15,7 @@
     "egoroof-blowfish": "^4.0.1",
     "fetch-cookie": "^3.0.1",
     "tough-cookie": "^4.1.3",
-    "ytdl-core": "^4.11.5",
+    "yt-dlp-wrap": "^2.3.12",
     "ytmusic-api": "^5.2.1"
   }
 }
