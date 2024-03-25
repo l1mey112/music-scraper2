@@ -1,6 +1,10 @@
 import { sqliteTable, integer, text, unique } from "drizzle-orm/sqlite-core";
 import { Locale, TrackId, AlbumId, ArtistId, SpotifyTrack, Isrc, SpotifyId, SpotifyAudioFeatures, SpotifyAlbum, SpotifyArtist, QobuzId, QobuzTrack, DeezerId, DeezerTrack, YoutubeId, MediaKind } from "./types";
 
+// https://www.sqlite.org/withoutrowid.html
+// drizzle doesn't support without rowid, so we do postprocess with python script
+
+// WITHOUT-ROWID: track
 export const track = sqliteTable('track', {
 	id: integer('id').$type<TrackId>().primaryKey(),
 
@@ -23,6 +27,7 @@ export const track = sqliteTable('track', {
 	meta_spotify_v1_audio_features: text('meta_spotify_v1_audio_features', { mode: 'json' }).$type<SpotifyAudioFeatures>(),
 })
 
+// WITHOUT-ROWID: album
 export const album = sqliteTable('album', {
 	id: integer('id').$type<AlbumId>().primaryKey(),
 
@@ -37,6 +42,7 @@ export const album = sqliteTable('album', {
 	meta_spotify_v1_get_album: text('meta_spotify_v1_get_album', { mode: 'json' }).$type<SpotifyAlbum>(),
 })
 
+// WITHOUT-ROWID: artist
 export const artist = sqliteTable('artist', {
 	id: integer('id').$type<ArtistId>().primaryKey(),
 
@@ -46,6 +52,8 @@ export const artist = sqliteTable('artist', {
 	meta_spotify_v1_get_artist: text('meta_spotify_v1_get_artist', { mode: 'json' }).$type<SpotifyArtist>(),
 })
 
+// does the order matter?
+// cannot have WITHOUT-ROWID as no primary key exists
 export const track_artists = sqliteTable('track_artists', {
 	track_id: integer('track_id').references(() => track.id).$type<TrackId>(),
 	artist_id: integer('artist_id').references(() => artist.id).$type<ArtistId>(),
@@ -55,8 +63,9 @@ export const track_artists = sqliteTable('track_artists', {
 }))
 
 // pass backoff for metadata
+// WITHOUT-ROWID: pass_backoff
 export const pass_backoff = sqliteTable('pass_backoff', {
-	utc: integer('utc').notNull(),
+	utc: integer('utc').primaryKey(),
 
 	// one of these should be not null
 	track_id: integer('track_id').references(() => track.id),
@@ -65,12 +74,6 @@ export const pass_backoff = sqliteTable('pass_backoff', {
 
 	pass: text('pass').notNull(),
 })
-
-
-// TODO: create custom mimetypes for media?
-// application/vnd.musicscraper2.<whatever we want>
-
-
 
 // media on disk
 export const media_fs = sqliteTable('media_fs', {
@@ -90,41 +93,13 @@ export const media_fs = sqliteTable('media_fs', {
 	kind: text('kind').$type<MediaKind>().notNull(),
 })
 
-// TODO: user defined metadata using a type, which is the closest ground truth
-
-//type TrackMetaSource = 'spotify_v1_get_track' | 'spotify_v1_audio_features' // ... | 'youtube' | 'niconico' | 'soundcloud' | 'bandcamp'
-
-/* export const media = sqliteTable('media', {
-	id: integer('id').$type<MediaId>().primaryKey(),
-
-	utc: integer('utc').notNull(), // utc epoch milliseconds
-
-	data: text('data', { mode: 'json' }).$type<MediaEntry>().notNull(),
-});
-
-type MediaImpl = {
-	cover_art: {
-		mime: string | null;
-		url: string | null;
-		local_path: string | null;
-	}
-}
-
-type MediaKind = 'cover_art' // ... | 'closed_caption' | 'lyrics' | 'music_video'
-
-export type MediaEntry = {
-	[K in MediaKind]: {
-		src: K;
-		data: MediaImpl[K] | null; // null means failed
-	};
-}[MediaKind] */
-
 // user accounts that need to be tracked incrementally to keep up with changes to append to database
-
+// WITHOUT-ROWID: thirdparty:spotify_users
 export const thirdparty_spotify_users = sqliteTable('thirdparty:spotify_users', {
 	spotify_id: text('spotify_id').primaryKey(),
 })
 
+// WITHOUT-ROWID: thirdparty:spotify_users
 export const thirdparty_spotify_saved_tracks = sqliteTable('thirdparty:spotify_saved_tracks', {
 	id: integer('id').primaryKey(),
 	save_utc: integer('utc').notNull(), // utc epoch milliseconds
@@ -136,7 +111,8 @@ export const thirdparty_spotify_saved_tracks = sqliteTable('thirdparty:spotify_s
 }))
 
 // persistent store
+// WITHOUT-ROWID: thirdparty:store
 export const thirdparty_store = sqliteTable('thirdparty:store', {
-	kind: text('kind').notNull(),
+	kind: text('kind').primaryKey(),
 	data: text('data', { mode: 'json' }).notNull(),
 })
